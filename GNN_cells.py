@@ -134,63 +134,6 @@ def shoelace_area(x_list,y_list):
     l=abs(a1-a2)/2
     return l
 
-
-class MLP(torch.nn.Module):
-    """Multi-Layer perceptron"""
-    def __init__(self, input_size, hidden_size, output_size, layers, layernorm=True):
-        super().__init__()
-        self.layers = torch.nn.ModuleList()
-        for i in range(layers):
-            self.layers.append(torch.nn.Linear(
-                input_size if i == 0 else hidden_size,
-                output_size if i == layers - 1 else hidden_size, device=device, dtype=torch.float64
-            ))
-            if i != layers - 1:
-                self.layers.append(torch.nn.ReLU())
-                # self.layers.append(torch.nn.Dropout(p=0.0))
-        if layernorm:
-            self.layers.append(torch.nn.LayerNorm(output_size, device=device, dtype=torch.float64))
-        self.reset_parameters()
-
-    def reset_parameters(self):
-        for layer in self.layers:
-            if isinstance(layer, torch.nn.Linear):
-                layer.weight.data.normal_(0, 1 / math.sqrt(layer.in_features))
-                layer.bias.data.fill_(0)
-
-    def forward(self, x):
-        for layer in self.layers:
-            x = layer(x)
-        return x
-
-class MLP2(nn.Module):
-    def __init__(self, in_feats=2, out_feats=2, num_layers=3, hidden=128):
-
-        super(MLP2, self).__init__()
-        self.layers = nn.ModuleList()
-        layer=nn.Linear(in_feats, hidden, device=device, dtype=torch.float64)
-        nn.init.normal_(layer.weight, std=0.1)
-        nn.init.zeros_(layer.bias)
-        self.layers.append(layer)
-        if num_layers > 2:
-            for i in range(1, num_layers - 1):
-                layer = nn.Linear(hidden, hidden, device=device, dtype=torch.float64)
-                nn.init.normal_(layer.weight, std=0.1)
-                nn.init.zeros_(layer.bias)
-                self.layers.append(layer)
-        layer = nn.Linear(hidden, out_feats, device=device, dtype=torch.float64)
-        nn.init.normal_(layer.weight, std=0.1)
-        nn.init.zeros_(layer.bias)
-        self.layers.append(layer)
-
-    def forward(self, x):
-        for l in range(len(self.layers) - 1):
-            x = self.layers[l](x)
-            x = F.relu(x)
-        x = self.layers[-1](x)
-        # x = torch.clamp(x, min=-1, max=1)
-        return x
-
 class CellConcentration(pyg.nn.MessagePassing):
     """Interaction Network as proposed in this paper:
     https://proceedings.neurips.cc/paper/2016/hash/3147da8ab4a0437c15ef51a5cc7f2dc4-Abstract.html"""
@@ -238,154 +181,6 @@ class GraphEntropy(pyg.nn.MessagePassing):
     def update(self, aggr_out):
 
         return aggr_out     #self.lin_node(aggr_out)
-
-class InteractionNetwork(pyg.nn.MessagePassing):
-    """Interaction Network as proposed in this paper:
-    https://proceedings.neurips.cc/paper/2016/hash/3147da8ab4a0437c15ef51a5cc7f2dc4-Abstract.html"""
-    def __init__(self, hidden_size, layers):
-        super().__init__(aggr='add')  # "Add" aggregation.
-        self.lin_edge = MLP(hidden_size * 3, hidden_size, hidden_size, layers)
-        self.lin_node = MLP(hidden_size * 2, hidden_size, hidden_size, layers)
-
-    def forward(self, x, edge_index, edge_feature):
-
-        aggr = self.propagate(edge_index, x=(x, x), edge_feature=edge_feature)
-        node_out = self.lin_node(torch.cat((x, aggr), dim=-1))
-        edge_out = edge_feature + self.new_edges
-        node_out = x + node_out
-        return node_out, edge_out
-
-    def message(self, x_i, x_j, edge_feature):
-
-        x = torch.cat((x_i, x_j, edge_feature), dim=-1)
-        x = self.lin_edge(x)
-        self.new_edges = x
-
-        return x
-
-class LearnedSimulator(torch.nn.Module):
-    """Graph Network-based Simulators(GNS)"""
-    def __init__(
-        self,
-        hidden_size=128,
-        n_mp_layers=5, #15, # number of GNN layers
-        dim=2, # dimension of the world, typical 2D or 3D
-        window_size=5, # the model looks into W frames before the frame to be predicted
-    ):
-        super().__init__()
-        self.window_size = window_size
-        self.node_in = MLP(16, hidden_size, hidden_size, 3)
-        self.edge_in = MLP(dim+1, hidden_size, hidden_size, 3)
-        self.node_out = MLP(hidden_size, hidden_size, dim, 3, layernorm=False)
-        self.n_mp_layers = n_mp_layers
-
-        self.layer = InteractionNetwork(hidden_size, 3)
-
-        # self.layers = torch.nn.ModuleList([InteractionNetwork(
-        #     hidden_size, 3
-        # ) for _ in range(n_mp_layers)])
-
-        self.a = nn.Parameter(torch.tensor(np.ones((int(n_tracks+1), 6)), requires_grad=False, device='cuda:0'))
-        self.a.requires_grad = True
-
-    def forward(self, data):
-        # pre-processing
-        # node feature: combine categorial feature data.x and contiguous feature data.pos.
-
-        track_id =data.x[:, 1].detach().cpu().numpy()
-        node_feature = torch.cat((data.x[:,2:5],data.x[:,6:9],data.x[:,10:14],self.a[track_id]), dim=-1)
-
-        # node_feature = data.x
-        node_feature = self.node_in(node_feature)
-        edge_feature = self.edge_in(data.edge_attr)
-        # stack of GNN layers
-
-        nlayers=self.n_mp_layers
-
-
-        if bMotility:
-
-            intermediate_speed=torch.tensor(np.zeros((node_feature.shape[0], 2*nlayers)), requires_grad=False, device='cuda:0')
-            intermediate_speed_target=torch.tensor(np.zeros((node_feature.shape[0], 2*nlayers)), requires_grad=False, device='cuda:0')
-
-            step_vx=(data.x[:,20]-data.x[:,6]) / nlayers
-            step_vy=(data.x[:,21]-data.x[:,7]) / nlayers
-
-            intermediate_pos = torch.tensor(np.zeros((node_feature.shape[0], 2 * nlayers)), requires_grad=False,device='cuda:0')
-            intermediate_pos_target = torch.tensor(np.zeros((node_feature.shape[0], 2 * nlayers)), requires_grad=False,device='cuda:0')
-
-            for i in range(nlayers):
-
-                intermediate_speed_target[:, i] = data.x[:, 6] + step_vx * (i + 1) * data.x[:, 17]
-                intermediate_speed_target[:, i + nlayers] = data.x[:, 7] + step_vy * (i + 1) * data.x[:, 17]
-                intermediate_pos_target[:, i] = data.x[:,2] + intermediate_speed_target[:, i]*nstd[6]/nstd[2]
-                intermediate_pos_target[:, i+nlayers] =data.x[:,3] + intermediate_speed_target[:, i + nlayers]*nstd[6]/nstd[2]
-
-                node_feature, edge_feature = self.layer(node_feature, data.edge_index, edge_feature=edge_feature)
-                intermediate_speed[:, i] = self.node_out(node_feature)[:, 0]
-                intermediate_speed[:, i + nlayers] = self.node_out(node_feature)[:, 1]
-                intermediate_pos[:,i]=data.x[:,2] + intermediate_speed[:, i]*nstd[6]/nstd[2]
-                intermediate_pos[:,i+nlayers]=data.x[:,3] + intermediate_speed[:, i + nlayers]*nstd[6]/nstd[2]
-
-            return intermediate_pos, intermediate_pos_target, intermediate_speed, intermediate_speed_target
-
-        else:
-
-            intermediate_pos=torch.tensor(np.zeros((node_feature.shape[0], 2*nlayers)), requires_grad=False, device='cuda:0')
-            intermediate_pos_target=torch.tensor(np.zeros((node_feature.shape[0], 2*nlayers)), requires_grad=False, device='cuda:0')
-
-            step_x=(data.x[:,18]-data.x[:,2]) / nlayers
-            step_y=(data.x[:,19]-data.x[:,3]) / nlayers
-
-            for i in range(nlayers):
-
-                intermediate_pos_target[:, i] = data.x[:,2] + step_x*(i+1)*data.x[:,17]
-                intermediate_pos_target[:, i+nlayers] = data.x[:,3] + step_y*(i+1)*data.x[:,17]
-
-                node_feature, edge_feature = self.layer(node_feature, data.edge_index, edge_feature=edge_feature)
-                intermediate_pos[:,i]=self.node_out(node_feature)[:,0]
-                intermediate_pos[:,i+nlayers] = self.node_out(node_feature)[:, 1]
-
-            return intermediate_pos, intermediate_pos_target
-
-class InteractionParticles(pyg.nn.MessagePassing):
-    """Interaction Network as proposed in this paper:
-    https://proceedings.neurips.cc/paper/2016/hash/3147da8ab4a0437c15ef51a5cc7f2dc4-Abstract.html"""
-    def __init__(self, in_feats=9, out_feats=2, num_layers=2, hidden=16):
-
-        super(InteractionParticles, self).__init__(aggr='add')  # "Add" aggregation.
-
-        self.lin_edge = MLP2(in_feats=11, out_feats=1, num_layers=3, hidden=32)
-        self.lin_update = MLP2(in_feats=3, out_feats=1, num_layers=2, hidden=16)
-
-        self.a = nn.Parameter(torch.tensor(np.ones((int(n_tracks+1),5)), requires_grad=True, device='cuda:0'))
-        self.b = nn.Parameter(torch.tensor(np.ones((1,1)), requires_grad=True, device='cuda:0'))
-
-    def forward(self, data):
-
-        x, edge_index, edge_attr = data.x, data.edge_index, dataset.edge_attr
-
-        message = self.propagate(edge_index, x=(x, x), edge_attr=edge_attr)
-
-        track_id = self.a[x[:, 1].detach().cpu().numpy()]
-
-        out = track_id[:,0:1] * message[:,0:1] - self.b[0]*x[:,4:5] # + self.b[1]*(x[:,11:12]-x[:,10:11])
-
-        return message, out
-
-    def message(self, x_i, x_j,edge_attr):
-
-        delta_pos=(x_i[:,2:4]-x_j[:,2:4])
-        track_id = self.a[x_i[:, 1].detach().cpu().numpy()]
-
-        in_features = torch.cat((delta_pos, edge_attr[:,0:1], x_i[:, 6:8], x_i[:, 11:12], x_i[:, 13:14],x_j[:, 6:8] * track_id[:, 1:3], x_j[:, 11:12]* track_id[:, 3:4], x_j[:, 13:14] * track_id[:, 4:5]), dim=-1)
-
-        return self.lin_edge(in_features)
-
-    def update(self, aggr_out):
-
-        return aggr_out     #self.lin_node(aggr_out)
-
 
 
 
@@ -448,9 +243,6 @@ if __name__ == "__main__":
                     'dt':6.7,
                     'frame_end' : 88,
 
-
-
-
                     }
 
     step = 0
@@ -486,9 +278,6 @@ if __name__ == "__main__":
         f = open(f"{folder}/model_config.json", "w")
         f.write(json_)
         f.close()
-
-
-
 
         radius = 0.05
         bMotility = True
@@ -727,7 +516,7 @@ if __name__ == "__main__":
         print(f'signal 1 {np.round(nmean[8],2)}+/-{np.round(nstd[8],2)}')
         print(f'signal 2 {np.round(nmean[9], 2)}+/-{np.round(nstd[9], 2)}')
         print(f'degree {np.round(nmean[16], 2)}+/-{np.round(nstd[16], 2)}')
-
+        print('')
 
         # normalization
 
@@ -741,12 +530,6 @@ if __name__ == "__main__":
 
             if trackmate[k + 1 , 1] == trackmate[k, 1]:
                 trackmate[k, 22:32] = trackmate[k + 1, 2:12]
-
-        print('Saving data ...')
-
-        np.save(f'{folder}/transformed_spots.npy', trackmate)
-        np.save(f'{folder}/nstd.npy', nstd)
-        np.save(f'{folder}/nmean.npy', nmean)
 
         print('Trackmate quality check...')
 
@@ -762,6 +545,11 @@ if __name__ == "__main__":
                     print(f'Pb check accx at row {k}')
                 if np.abs((trackmate[k+1, 7]*nstd[7] + nmean[7]) - (trackmate[k+1, 5] - trackmate[k, 5])*nstd[5]) > 1E-3:
                     print(f'Pb check accy at row {k}')
-
-
+                    
         print('Check done')
+
+        print('Saving data ...')
+
+        np.save(f'{folder}/transformed_spots.npy', trackmate)
+        np.save(f'{folder}/nstd.npy', nstd)
+        np.save(f'{folder}/nmean.npy', nmean)
