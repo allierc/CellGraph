@@ -421,7 +421,7 @@ if __name__ == "__main__":
 
     print(f'Device :{device}')
 
-    model_config = {'ntry': 470,
+    model_config = {'ntry': 480,
                     'datum': '2309012_470',
                     'trackmate_metric' : {'Label': 0,
                     'Spot_ID': 1,

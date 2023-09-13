@@ -282,7 +282,7 @@ class InteractionParticlesRollout(pyg.nn.MessagePassing):
 
         return aggr_out     #self.lin_node(aggr_out)
 
-def train_model():
+def train_model(trackmate=None):
 
     ntry = model_config['ntry']
     bRollout = model_config['bRollout']
@@ -346,9 +346,15 @@ def train_model():
 
     print('Training model = InteractionParticles() ...')
 
-    ff = 0
-    trackmate = trackmate_list[ff].copy()
-    trackmate_true = trackmate_list[ff].copy()
+    # ff = 0
+    # trackmate = trackmate_list[ff].copy()
+    # trackmate_true = trackmate_list[ff].copy()
+
+    # ff = 0
+    # trackmate = trackmate_list[ff].copy()
+    trackmate_true = []
+
+    trackmate_true = trackmate.copy()
 
     best_loss = np.inf
 
@@ -386,7 +392,7 @@ def train_model():
                                 edge_attr=torch.tensor(distance[pos[:, 0]], device=device))
 
             optimizer.zero_grad()
-            message, pred = model(data=dataset, data_id=ff)
+            message, pred = model(data=dataset, data_id=0)
 
             loss = criteria((pred[:, :] + x[:, 4:5]) * mask, target * mask) * 3
 
@@ -415,48 +421,48 @@ if __name__ == "__main__":
 
     print(f'Device :{device}')
 
-    file_list=["/home/allierc@hhmi.org/Desktop/signaling/HGF-ERK signaling/fig 1/B_E/210105/",\
-               "/home/allierc@hhmi.org/Desktop/signaling/HGF-ERK signaling/fig 1/B_E/210108/",\
-               "/home/allierc@hhmi.org/Desktop/signaling/HGF-ERK signaling/fig 1/B_E/210109/"]
-    file_folder = file_list[0]
-    print(file_folder)
-
-    file_list=["/home/allierc@hhmi.org/Desktop/signaling/HGF-ERK signaling/fig 1/B_E/210105/",\
-               "/home/allierc@hhmi.org/Desktop/signaling/HGF-ERK signaling/fig 1/B_E/210108/",\
-               "/home/allierc@hhmi.org/Desktop/signaling/HGF-ERK signaling/fig 1/B_E/210109/"]
-    file_folder = file_list[0]
-    print(file_folder)
-
-    print('Loading trackmate ...')
-    trackmate_list=[]
-    for ff in range(1):
-        trackmate = np.load(f'{file_list[ff]}/trackmate/transformed_spots_try{415+ff}.npy')
-        trackmate[-1, 0] = -1
-        trackmate_list.append(trackmate)
-        if ff==0:
-            n_tracks = np.max(trackmate[:, 1]) + 1
-            trackmate_true = trackmate.copy()
-            nstd = np.load(f'{file_folder}/trackmate/nstd_try415.npy')
-            nmean = np.load(f'{file_folder}/trackmate/nmean_try415.npy')
-            c = nstd[6] / nstd[2]
-
-    print('Trackmate quality check...')
-    time.sleep(0.5)
-    for ff in range(1):
-        trackmate = trackmate_list[ff]
-        for k in tqdm(range(5, trackmate.shape[0] - 1)):
-            if trackmate[k-1, 1] == trackmate[k+1, 1]:
-
-                if np.abs(trackmate[k+1, 6] * c - (trackmate[k+1, 2] - trackmate[k, 2])) > 1E-3:
-                    print(f'Pb check vx at row {k}')
-                if np.abs(trackmate[k+1, 7] * c - (trackmate[k+1, 3] - trackmate[k, 3])) > 1E-3:
-                    print(f'Pb check vy at row {k}')
-
-                if np.abs(trackmate[k+1, 15] - (trackmate[k+1, 6] - trackmate[k, 6])) > 1E-3:
-                    print(f'Pb check accx at row {k}')
-                if np.abs(trackmate[k+1, 16] - (trackmate[k+1, 7] - trackmate[k, 7])) > 1E-3:
-                    print(f'Pb check accy at row {k}')
-    print('... done')
+    # file_list=["/home/allierc@hhmi.org/Desktop/signaling/HGF-ERK signaling/fig 1/B_E/210105/",\
+    #            "/home/allierc@hhmi.org/Desktop/signaling/HGF-ERK signaling/fig 1/B_E/210108/",\
+    #            "/home/allierc@hhmi.org/Desktop/signaling/HGF-ERK signaling/fig 1/B_E/210109/"]
+    # file_folder = file_list[0]
+    # print(file_folder)
+    #
+    # file_list=["/home/allierc@hhmi.org/Desktop/signaling/HGF-ERK signaling/fig 1/B_E/210105/",\
+    #            "/home/allierc@hhmi.org/Desktop/signaling/HGF-ERK signaling/fig 1/B_E/210108/",\
+    #            "/home/allierc@hhmi.org/Desktop/signaling/HGF-ERK signaling/fig 1/B_E/210109/"]
+    # file_folder = file_list[0]
+    # print(file_folder)
+    #
+    # print('Loading trackmate ...')
+    # trackmate_list=[]
+    # for ff in range(1):
+    #     trackmate = np.load(f'{file_list[ff]}/trackmate/transformed_spots_try{415+ff}.npy')
+    #     trackmate[-1, 0] = -1
+    #     trackmate_list.append(trackmate)
+    #     if ff==0:
+    #         n_tracks = np.max(trackmate[:, 1]) + 1
+    #         trackmate_true = trackmate.copy()
+    #         nstd = np.load(f'{file_folder}/trackmate/nstd_try415.npy')
+    #         nmean = np.load(f'{file_folder}/trackmate/nmean_try415.npy')
+    #         c = nstd[6] / nstd[2]
+    #
+    # print('Trackmate quality check...')
+    # time.sleep(0.5)
+    # for ff in range(1):
+    #     trackmate = trackmate_list[ff]
+    #     for k in tqdm(range(5, trackmate.shape[0] - 1)):
+    #         if trackmate[k-1, 1] == trackmate[k+1, 1]:
+    #
+    #             if np.abs(trackmate[k+1, 6] * c - (trackmate[k+1, 2] - trackmate[k, 2])) > 1E-3:
+    #                 print(f'Pb check vx at row {k}')
+    #             if np.abs(trackmate[k+1, 7] * c - (trackmate[k+1, 3] - trackmate[k, 3])) > 1E-3:
+    #                 print(f'Pb check vy at row {k}')
+    #
+    #             if np.abs(trackmate[k+1, 15] - (trackmate[k+1, 6] - trackmate[k, 6])) > 1E-3:
+    #                 print(f'Pb check accx at row {k}')
+    #             if np.abs(trackmate[k+1, 16] - (trackmate[k+1, 7] - trackmate[k, 7])) > 1E-3:
+    #                 print(f'Pb check accy at row {k}')
+    # print('... done')
 
     # training_list=[[370,0,1,0, 1], [371,0,2,0, 1], [372,0,3,0, 1]] # rot_mode=1 cell embedding
     # training_list=[[373, 0, 1, 1, 1], [374, 0, 2, 1, 1], [375, 0, 3, 1, 1]] # rot_mode=1 no cell embedding
@@ -487,7 +493,119 @@ if __name__ == "__main__":
                     'frame_end': [241, 228, 228],
                     'n_tracks': 3561,
                     'radius': 0.15}
-    train_model()
+
+    model_config = {'ntry': 480,
+                    'datum': '2309012_470',
+                    'trackmate_metric' : {'Label': 0,
+                    'Spot_ID': 1,
+                    'Track_ID': 2,
+                    'Quality': 3,
+                    'X': 4,
+                    'Y': 5,
+                    'Z': 6,
+                    'T': 7,
+                    'Frame': 8,
+                    'R': 9,
+                    'Visibility': 10,
+                    'Spot color': 11,
+                    'Mean Ch1': 12,
+                    'Median Ch1': 13,
+                    'Min Ch1': 14,
+                    'Max Ch1': 15,
+                    'Sum Ch1': 16,
+                    'Std Ch1': 17,
+                    'Ctrst Ch1': 18,
+                    'SNR Ch1': 19,
+                    'El. x0': 20,
+                    'El. y0': 21,
+                    'El. long axis': 22,
+                    'El. sh. axis': 23,
+                    'El. angle': 24,
+                    'El. a.r.': 25,
+                    'Area': 26,
+                    'Perim.': 27,
+                    'Circ.': 28,
+                    'Solidity': 29,
+                    'Shape index': 30},
+
+                    'metric_list' : ['Frame', 'Track_ID', 'X', 'Y', 'Mean Ch1', 'Area'],
+
+                    'file_folder' : '/home/allierc@hhmi.org/Desktop/signaling/HGF-ERK signaling/fig 1/B_E/210105/trackmate/',
+
+                    'dx':0.908,
+                    'dt':5.0,
+                    'h': 0,
+                    'msg': 1,
+                    'aggr': 0,
+                    'rot_mode':1,
+                    'embedding': 3,
+                    'cell_embedding': 1,
+                    'time_embedding': False,
+                    'n_mp_layers': 3,
+                    'hidden_size': 32,
+                    'bNoise': False,
+                    'noise_level': 0,
+                    'batch_size': 4,
+                    'bRollout': False,
+                    'rollout_window': 2,
+                    'frame_start': 20,
+                    'frame_end': [241],
+                    'n_tracks': 0,
+                    'radius': 0.15}
+
+    trackmate_metric = model_config['trackmate_metric']
+    print('')
+    ntry = model_config['ntry']
+    print(f'ntry: {ntry}')
+    datum = model_config['datum']
+    print(f'datum: {datum}')
+    file_folder = model_config['file_folder']
+    print(f'file_folder: {file_folder}')
+    dx = model_config['dx']
+    print(f'dx: {dx} microns')
+    dt = model_config['dt']
+    print(f'dt: {dt} minutes')
+    metric_list = model_config['metric_list']
+    print(f'metric_list: {metric_list}')
+    frame_end = model_config['frame_end']
+    print(f'frame_end: {frame_end}')
+
+    folder = f'./graphs_data/graphs_cells_{datum}/'
+
+    print('Loading trackmate ...')
+    trackmate_list=[]
+
+    print('Loading trackmate file ...')
+    trackmate = np.load(f'{folder}/transformed_spots.npy')
+    trackmate[-1, 0] = -1
+    nstd = np.load(f'{folder}/nstd.npy')
+    nmean = np.load(f'{folder}/nmean.npy')
+    c = nstd[6] / nstd[2]
+    print('done ...')
+    n_tracks = np.max(trackmate[:, 1])
+    model_config['n_tracks'] = n_tracks+1
+    print(f'n_tracks: {n_tracks}')
+
+    print('Trackmate quality check...')
+    time.sleep(0.5)
+
+    for k in tqdm(range(5, trackmate.shape[0] - 1)):
+        if trackmate[k-1, 1] == trackmate[k+1, 1]:
+
+            if np.abs(trackmate[k+1, 6] * c - (trackmate[k+1, 2] - trackmate[k, 2])) > 1E-3:
+                print(f'Pb check vx at row {k}')
+            if np.abs(trackmate[k+1, 7] * c - (trackmate[k+1, 3] - trackmate[k, 3])) > 1E-3:
+                print(f'Pb check vy at row {k}')
+
+            if np.abs(trackmate[k+1, 15] - (trackmate[k+1, 6] - trackmate[k, 6])) > 1E-3:
+                print(f'Pb check accx at row {k}')
+            if np.abs(trackmate[k+1, 16] - (trackmate[k+1, 7] - trackmate[k, 7])) > 1E-3:
+                print(f'Pb check accy at row {k}')
+
+    print('... done')
+
+
+    train_model(trackmate=trackmate)
 
     model_config = {'ntry': 471,
                     'h': 0,
