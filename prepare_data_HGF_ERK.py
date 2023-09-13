@@ -435,7 +435,7 @@ if __name__ == "__main__":
 
 
     model_config = {'ntry': 470,
-                    'datum': '2309012_470',
+                    'datum': '2309012_480',
                     'trackmate_metric' : {'Label': 0,
                     'Spot_ID': 1,
                     'Track_ID': 2,
@@ -685,23 +685,26 @@ if __name__ == "__main__":
 
     print ('Filling gap Trackmate ...')
 
-    time.sleep(0.5)
-    new_trackmate = trackmate[0:1, :]
-    for p in tqdm(range(1, trackmate.shape[0] - 1)):
+    if True:
+        time.sleep(0.5)
+        new_trackmate = trackmate[0:1, :]
+        for p in tqdm(range(1, trackmate.shape[0] - 1)):
 
-        if (trackmate[p, 1] == trackmate[p+1, 1]) & (trackmate[p + 1, 0] != trackmate[p, 0] + 1):
-            gap = trackmate[p + 1, 0] - trackmate[p, 0] - 1
-            first = trackmate[p:p + 1, :]
-            last = trackmate[p + 1:p + 2, :]
-            step = (last - first) / (gap + 1)
-            step[0, 0] = 1
-            step[0, flag_column] = 0
-            new_trackmate = np.concatenate((new_trackmate, trackmate[p:p + 1, :]), axis=0)
-            for k in range(gap.astype(int)):
-                new_trackmate = np.concatenate((new_trackmate, new_trackmate[-1:, :] + step), axis=0)
-        else:
-            new_trackmate = np.concatenate((new_trackmate, trackmate[p:p + 1, :]), axis=0)
-    trackmate = new_trackmate
+            if (trackmate[p, 1] == trackmate[p+1, 1]) & (trackmate[p + 1, 0] != trackmate[p, 0] + 1):
+                gap = trackmate[p + 1, 0] - trackmate[p, 0] - 1
+                first = trackmate[p:p + 1, :]
+                last = trackmate[p + 1:p + 2, :]
+                step = (last - first) / (gap + 1)
+                step[0, 0] = 1
+                step[0, flag_column] = 0
+                new_trackmate = np.concatenate((new_trackmate, trackmate[p:p + 1, :]), axis=0)
+                for k in range(gap.astype(int)):
+                    new_trackmate = np.concatenate((new_trackmate, new_trackmate[-1:, :] + step), axis=0)
+            else:
+                new_trackmate = np.concatenate((new_trackmate, trackmate[p:p + 1, :]), axis=0)
+        trackmate = new_trackmate
+
+
     trackmate = np.concatenate((trackmate, trackmate[-1:, :]), axis=0)
     trackmate [-1,0]=-1
 
@@ -710,12 +713,16 @@ if __name__ == "__main__":
 
     print('Derivative ...')
 
+    trackmate[:,2:4] = trackmate[:,2:4] * dx
+
     n_list=[2,3]
     for n in n_list:
         diff = trackmate[1:, n] - trackmate[:-1, n]
         diff = np.concatenate((np.zeros(1), diff))
         trackmate[:, n+4] = diff
-    n_list =[4]
+    n_list =[4,5]
+    trackmate[:, 6:8] = trackmate[:, 6:8] / dt
+
     for n in n_list:
         diff = trackmate[1:, n] - trackmate[:-1, n]
         diff = np.concatenate((np.zeros(1), diff))
@@ -756,14 +763,12 @@ if __name__ == "__main__":
     nstd = np.squeeze(3*np.std(f_trackmate, axis=0))
 
     nstd[3] = nstd[2]  # x and y
-    nstd[6] = nstd[2] / 100  # vx and x
-    nstd[7] = nstd[2] / 100  # vy and x
+    nstd[7] = nstd[6]  # vy as vx
+    nstd[15] = nstd[6] # accx and vx
+    nstd[16] = nstd[6] # accy and vx
+    nstd[8:10] = nstd[4:6]  # signals and its derivative
 
-    nstd[15] = nstd[6] # accx and x
-    nstd[16] = nstd[6] # accy and x
-
-    nmean[6:10] = 0
-    nstd[8] = nstd[4]  # signal and its derivative
+    nmean[6:17] = 0
 
     print('')
     print(f'x {np.round(nmean[2], 1)}+/-{np.round(nstd[2], 1)}')
@@ -779,7 +784,7 @@ if __name__ == "__main__":
 
     trackmate[:, 2:17] = (trackmate[:, 2:17] - nmean[2:17]) / nstd[2:17]
 
-    c=nstd[6]/nstd[2]
+    c=nstd[6]/nstd[2]*dt
 
     print ('Fillling past and future ...')
 
@@ -838,7 +843,7 @@ if __name__ == "__main__":
 
     time.sleep(0.5)
 
-    c = nstd[6] / nstd[2]
+    c = nstd[6] / nstd[2] * dt
 
     for k in tqdm(range(5, trackmate.shape[0] - 1)):
         if trackmate[k-1, 1] == trackmate[k+1, 1]:

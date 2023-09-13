@@ -494,8 +494,8 @@ if __name__ == "__main__":
                     'n_tracks': 3561,
                     'radius': 0.15}
 
-    model_config = {'ntry': 480,
-                    'datum': '2309012_470',
+    model_config = {'ntry': 490,
+                    'datum': '2309012_480',
                     'trackmate_metric' : {'Label': 0,
                     'Spot_ID': 1,
                     'Track_ID': 2,
@@ -580,7 +580,7 @@ if __name__ == "__main__":
     trackmate[-1, 0] = -1
     nstd = np.load(f'{folder}/nstd.npy')
     nmean = np.load(f'{folder}/nmean.npy')
-    c = nstd[6] / nstd[2]
+    c = nstd[6] / nstd[2] * dt
     print('done ...')
     n_tracks = np.max(trackmate[:, 1])
     model_config['n_tracks'] = n_tracks+1
@@ -589,7 +589,7 @@ if __name__ == "__main__":
     print('Trackmate quality check...')
     time.sleep(0.5)
 
-    for k in tqdm(range(5, trackmate.shape[0] - 1)):
+    for k in tqdm(range(0, trackmate.shape[0] - 1)):
         if trackmate[k-1, 1] == trackmate[k+1, 1]:
 
             if np.abs(trackmate[k+1, 6] * c - (trackmate[k+1, 2] - trackmate[k, 2])) > 1E-3:
@@ -628,26 +628,26 @@ if __name__ == "__main__":
                     'radius': 0.15}
     train_model()
 
-    model_config = {'ntry': 472,
-                    'h': 0,
-                    'msg': 3,
-                    'aggr': 0,
-                    'rot_mode':1,
-                    'embedding': 3,
-                    'cell_embedding': 1,
-                    'time_embedding': False,
-                    'n_mp_layers': 3,
-                    'hidden_size': 32,
-                    'bNoise': False,
-                    'noise_level': 0,
-                    'batch_size': 4,
-                    'bRollout': False,
-                    'rollout_window': 2,
-                    'frame_start': 20,
-                    'frame_end': [241, 228, 228],
-                    'n_tracks': 3561,
-                    'radius': 0.15}
-    train_model()
+    # model_config = {'ntry': 472,
+    #                 'h': 0,
+    #                 'msg': 3,
+    #                 'aggr': 0,
+    #                 'rot_mode':1,
+    #                 'embedding': 3,
+    #                 'cell_embedding': 1,
+    #                 'time_embedding': False,
+    #                 'n_mp_layers': 3,
+    #                 'hidden_size': 32,
+    #                 'bNoise': False,
+    #                 'noise_level': 0,
+    #                 'batch_size': 4,
+    #                 'bRollout': False,
+    #                 'rollout_window': 2,
+    #                 'frame_start': 20,
+    #                 'frame_end': [241, 228, 228],
+    #                 'n_tracks': 3561,
+    #                 'radius': 0.15}
+    # train_model()
     #
     # model_config = {'ntry': 373,
     #                 'h': 0,
