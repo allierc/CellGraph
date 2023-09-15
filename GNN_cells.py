@@ -187,7 +187,6 @@ class MLP(nn.Module):
             x = F.relu(x)
         x = self.layers[-1](x)
         return x
-
 class InteractionParticlesRollout(pyg.nn.MessagePassing):
     """Interaction Network as proposed in this paper:
     https://proceedings.neurips.cc/paper/2016/hash/3147da8ab4a0437c15ef51a5cc7f2dc4-Abstract.html"""
@@ -410,8 +409,8 @@ def train_model(model_config=None, trackmate=None):
     # ff = 0
     # trackmate = trackmate_list[ff].copy()
     # trackmate_true = trackmate_list[ff].copy()
-    trackmate_true = []
 
+    trackmate_true = []
     trackmate_true = trackmate.copy()
 
     best_loss = np.inf
@@ -470,7 +469,7 @@ def train_model(model_config=None, trackmate=None):
     print(' end of training')
     print(' ')
 
-def test_model(bVisu=False, bMinimization=False):
+def test_model(bVisu=False, bMinimization=False, net_type='InteractionParticlesRollout'):
 
 
     model_lin = LinearRegression()
@@ -478,39 +477,76 @@ def test_model(bVisu=False, bMinimization=False):
     ntry = model_config['ntry']
     bRollout = model_config['bRollout']
 
-    print(f'Testing {ntry}')
-    print(f'rot_mode:', model_config['rot_mode'])
+    if net_type == 'InteractionParticlesRollout':
 
-    if model_config['h'] == 0:
-        print('H: MLP(message - b Erk)')
-    else:  # model_config['h'] == 1:
-        print('H: MLP(message)')
+        print(f'Testing {ntry}')
+        print(f'rot_mode:', model_config['rot_mode'])
 
-    if model_config['msg'] == 0:
-        print('msg: 0')
-    elif model_config['msg'] == 1:
-        print('msg: MLP(x_jp, y_jp, vx_p/d, vy_p/d, diff_erk)')
-    elif model_config['msg'] == 2:
-        print('msg: MLP(x_jp, y_jp, vx_p/d, vy_p/d)')
-    elif model_config['msg'] == 3:
-        print('msg: MLP(diff_erk)')
-    else:  # model_config['msg']==4:
-        print('msg: 0')
-    if model_config['cell_embedding'] == 0:
-        print('embedding: a false t false')
-    elif model_config['cell_embedding'] == 1:
-        print('embedding: a true t false')
-    else:  # model_config['cell_embedding'] == 2:
-        print('embedding: a true t true')
+        if model_config['h'] == 0:
+            print('H: MLP(message - b Erk)')
+        else:  # model_config['h'] == 1:
+            print('H: MLP(message)')
+
+        if model_config['msg'] == 0:
+            print('msg: 0')
+        elif model_config['msg'] == 1:
+            print('msg: MLP(x_jp, y_jp, vx_p/d, vy_p/d, diff_erk)')
+        elif model_config['msg'] == 2:
+            print('msg: MLP(x_jp, y_jp, vx_p/d, vy_p/d)')
+        elif model_config['msg'] == 3:
+            print('msg: MLP(diff_erk)')
+        else:  # model_config['msg']==4:
+            print('msg: 0')
+        if model_config['cell_embedding'] == 0:
+            print('embedding: a false t false')
+        elif model_config['cell_embedding'] == 1:
+            print('embedding: a true t false')
+        else:  # model_config['cell_embedding'] == 2:
+            print('embedding: a true t true')
+
+        model = InteractionParticlesRollout(model_config=model_config, device=device)
+        model.nstd = nstd
+        model.nmean = nmean
+        state_dict = torch.load(f"./log/try_{ntry}/models/best_model_new.pt")
+        model.load_state_dict(state_dict['model_state_dict'])
+
+    if net_type == 'ResNetGNN':
+
+        print('ntry: ', model_config['ntry'])
+        if model_config['h'] == 0:
+            print('no GRUcell ')
+        elif model_config['h'] == 1:
+            print('with GRUcell ')
+        if (model_config['msg'] == 0) | (model_config['embedding'] > 0):
+            print('msg: 0')
+        elif model_config['msg'] == 1:
+            print('msg: MLP2(x_jp, y_jp, vx_p, vy_p, ux, uy)')
+        elif model_config['msg'] == 2:
+            print('msg: MLP2(x_jp, y_jp, vx_p, vy_p, ux, uy, diff erkj)')
+        elif model_config['msg'] == 3:
+            print('msg: MLP2(diff_erk)')
+        else:  # model_config['msg']==4:
+            print('msg: 0')
+        bRollout = model_config['bRollout']
+        output_angle = model_config['output_angle']
+        print('embedding: ', model_config['embedding'])
+        print('hidden_size: ', model_config['hidden_size'])
+        print('n_mp_layers: ', model_config['n_mp_layers'])
+        print('noise_level: ', model_config['noise_level'])
+        print('bRollout: ', model_config['bRollout'])
+        print('rollout_window: ', model_config['rollout_window'])
+        print(f'batch size: ', model_config['batch_size'])
+        print('remove_update_U: ', model_config['remove_update_U'])
+        print('output_angle: ', model_config['output_angle'])
+        print('train_MLPs: ', model_config['train_MLPs'])
+
+        model = ResNetGNN(model_config=model_config, device=device)
+        model.nstd = nstd
+        model.nmean = nmean
+        state_dict = torch.load(f"./log/try_{ntry}/models/best_model_new_emb.pt")
+        model.load_state_dict(state_dict['model_state_dict'])
 
 
-    trackmate_true = trackmate.copy()
-
-    model = InteractionParticlesRollout(model_config=model_config, device=device)
-    model.nstd = nstd
-    model.nmean = nmean
-    state_dict = torch.load(f"./log/try_{ntry}/models/best_model_new.pt")
-    model.load_state_dict(state_dict['model_state_dict'])
 
     table = PrettyTable(["Modules", "Parameters"])
     total_params = 0
@@ -544,6 +580,8 @@ def test_model(bVisu=False, bMinimization=False):
     I = imread(f'{file_folder}/../ACTIVITY.tif')
     I = np.array(I)
 
+    trackmate_true = trackmate.copy()
+
     for frame in tqdm(range(20, 240)):  # frame_list:
 
         model.frame = int(frame)
@@ -573,7 +611,11 @@ def test_model(bVisu=False, bMinimization=False):
         dataset = data.Data(x=x, edge_index=edges[:, pos[:, 0]],
                             edge_attr=torch.tensor(distance[pos[:, 0]], device=device))
 
-        message, pred = model(data=dataset, data_id=0)
+        if net_type == 'InteractionParticlesRollout':
+            message , pred = model(data=dataset, data_id=0)
+        else:
+            pred = model(data=dataset, data_id=0)
+
 
         loss = criteria((pred[:, :] + x[:, 8:9]) * mask * nstd[8], target * mask * nstd[8])
 
@@ -588,7 +630,8 @@ def test_model(bVisu=False, bMinimization=False):
         yy = yy.detach().cpu().numpy()
         model_lin.fit(xx, yy)
         R2model.append(model_lin.score(xx, yy))
-        message = message.detach().cpu().numpy()
+        if net_type == 'InteractionParticlesRollout':
+            message = message.detach().cpu().numpy()
 
         # trackmate[list_all + 1,4:5] = yy
 
@@ -684,12 +727,13 @@ def test_model(bVisu=False, bMinimization=False):
             plt.xlabel('True ERk [a.u]', fontsize=12)
             plt.ylabel('Model Erk [a.u]', fontsize=12)
 
-            ax = fig.add_subplot(3, 5, 11)
-            plt.scatter(trackmate[list_all + 1, 2], trackmate[list_all + 1, 3], s=125, marker='.',
-                        c=message[:, 0], vmin=-1, vmax=1)
-            plt.xlim([-0.6, 0.95])
-            plt.ylim([-0.6, 0.6])
-            plt.text(-0.6, 0.65, 'Message amplitude [a.u.]', fontsize=12)
+            if net_type == 'InteractionParticlesRollout':
+                ax = fig.add_subplot(3, 5, 11)
+                plt.scatter(trackmate[list_all + 1, 2], trackmate[list_all + 1, 3], s=125, marker='.',
+                            c=message[:, 0], vmin=-1, vmax=1)
+                plt.xlim([-0.6, 0.95])
+                plt.ylim([-0.6, 0.6])
+                plt.text(-0.6, 0.65, 'Message amplitude [a.u.]', fontsize=12)
 
             ax = fig.add_subplot(3, 5, 6)
             xx0 = x.detach().cpu() * nstd[2]
@@ -871,6 +915,486 @@ def test_model(bVisu=False, bMinimization=False):
     print(f"R2: {np.round(np.mean(R2model), 3)} +/- {np.round(np.std(R2model), 3)} ")
     print('')
 
+
+class MLP2(torch.nn.Module):
+    """Multi-Layer perceptron"""
+    def __init__(self, input_size, hidden_size, output_size, layers, device):
+        super().__init__()
+        self.layers = torch.nn.ModuleList()
+        self.layernorm = False
+
+        for i in range(layers):
+            self.layers.append(torch.nn.Linear(
+                input_size if i == 0 else hidden_size,
+                output_size if i == layers - 1 else hidden_size, device=device, dtype=torch.float64
+            ))
+            if i != layers - 1:
+                self.layers.append(torch.nn.ReLU())
+                # self.layers.append(torch.nn.Dropout(p=0.0))
+        if self.layernorm:
+            self.layers.append(torch.nn.LayerNorm(output_size, device=device, dtype=torch.float64))
+        self.reset_parameters()
+
+    def reset_parameters(self):
+        for layer in self.layers:
+            if isinstance(layer, torch.nn.Linear):
+                layer.weight.data.normal_(0, 1 / math.sqrt(layer.in_features))
+                layer.bias.data.fill_(0)
+
+    def forward(self, x):
+        for layer in self.layers:
+            x = layer(x)
+        return x
+class Erk_move(nn.Module):
+    def __init__(self, GNN, x, data, data_id, device):    # in_feats=2, out_feats=2, num_layers=3, hidden=128):
+
+        super(Erk_move, self).__init__()
+
+        self.device = device
+        self.GNN= GNN
+        self.x0 = x
+        self.dataset = data
+        self.ff = data_id
+        # self.old_x = nn.Parameter(x[:, :].clone().detach().requires_grad_(False))
+        self.new_x = nn.Parameter(x[:,:].clone().detach().requires_grad_(True))
+
+    def forward(self):
+
+        dataset = data.Data(x=self.new_x.clone().detach(), pos=self.new_x[:,2:4].detach())
+        transform = T.Compose([T.Delaunay(),T.FaceToEdge(),T.Distance(norm=False)])
+        dataset = transform(dataset)
+        distance = dataset.edge_attr.detach().cpu().numpy()
+        pos = np.argwhere(distance<0.15)
+        edges = dataset.edge_index
+
+        # x_temp=torch.cat((self.old_x[:,0:6],self.new_x,self.old_x[:,8:19]),dim=1)
+        dataset = data.Data(x=self.new_x, edge_index=edges[:, pos[:, 0]],edge_attr=torch.tensor(distance[pos[:, 0]], device=self.device))
+        pred = self.GNN(data=dataset, data_id=self.ff)
+
+        return pred
+class EdgeNetwork(pyg.nn.MessagePassing):
+    """Interaction Network as proposed in this paper:
+    https://proceedings.neurips.cc/paper/2016/hash/3147da8ab4a0437c15ef51a5cc7f2dc4-Abstract.html"""
+    def __init__(self, hidden_size, layers):
+        super().__init__(aggr='add')  # "Add" aggregation.
+
+    def forward(self, x, edge_index, edge_feature):
+
+        aggr = self.propagate(edge_index, x=(x, x), edge_feature=edge_feature)
+
+        return self.new_edges
+
+    def message(self, x_i, x_j, edge_feature):
+
+        xi = x_i[:, 0:1]
+        yi = x_i[:, 1:2]
+
+        xj = x_j[:, 0:1]
+        yj = x_j[:, 1:2]
+
+        vxi = x_i[:, 2:3]
+        vyi = x_i[:, 3:4]
+
+        vxj = x_j[:, 2:3]
+        vyj = x_j[:, 3:4]
+
+        erki = x_i[:,4:5]
+        erkj = x_j[:,4:5]
+
+        dx = xj - xi
+        dy = yj - yi
+        dvx = vxj - vxi
+        dvy = vyj - vyi
+
+        d = edge_feature[:,0:1]
+
+        self.new_edges = torch.cat((d, dx , dy , dvx, dvy), dim=-1)
+
+        return d
+class InteractionNetwork(pyg.nn.MessagePassing):
+    """Interaction Network as proposed in this paper:
+    https://proceedings.neurips.cc/paper/2016/hash/3147da8ab4a0437c15ef51a5cc7f2dc4-Abstract.html"""
+    def __init__(self, hidden_size, layers, h, msg, device):
+        super().__init__(aggr='add')  # "Add" aggregation.
+
+        self.hidden_size = hidden_size
+        self.h = h
+        self.layers = layers
+        self.msg = msg
+        self.device =device
+
+        if (self.msg == 0) | (self.msg==3):
+             self.lin_edge = MLP2(input_size=1, hidden_size=self.hidden_size, output_size=7, layers=self.layers, device=self.device)
+        if (self.msg == 1):
+            self.lin_edge = MLP2(input_size=13, hidden_size=self.hidden_size, output_size=7, layers=self.layers, device=self.device)
+        if (self.msg == 2):
+            self.lin_edge = MLP2(input_size=14, hidden_size=self.hidden_size, output_size=7, layers=self.layers, device=self.device)
+
+        if self.h == 0:
+            self.lin_node = MLP2(input_size=12, hidden_size=self.hidden_size, output_size=7, layers=self.layers, device=self.device)
+        else:
+            self.lin_node = MLP2(input_size=64, hidden_size=self.hidden_size, output_size=7, layers=self.layers, device=self.device)
+
+        self.rnn = torch.nn.GRUCell(14, 64,device=self.device,dtype=torch.float64)
+
+    def forward(self, x, edge_index, edge_feature):
+
+        aggr = self.propagate(edge_index, x=(x, x), edge_feature=edge_feature)
+
+        if self.h==0:
+            node_out = self.lin_node(torch.cat((x[:,:-2], aggr), dim=-1))
+            prev_node_feature = node_out[:, :-2]
+            prev_edge_feature = edge_feature[:,:-2]
+
+            node_out = x + node_out
+            node_out[:, :-2] = prev_node_feature  # no update ui
+
+            edge_out = edge_feature + model.new_edges
+            if model_config['remove_update_U']:
+                edge_out[:,:-2] = prev_edge_feature     #no update ui
+
+        else:
+            super_x=torch.cat((x, coeff, aggr), dim=-1)
+            model.h = self.rnn(super_x,model.h)     ########### TO BE CORRECTED ###################
+            node_out = self.lin_node(model.h)
+            edge_out = edge_feature + self.new_edges
+
+        return node_out, edge_out
+
+    def message(self, x_i, x_j, edge_feature):
+
+        xi = x_i[:, 0:1]
+        yi = x_i[:, 1:2]
+
+        xj = x_j[:, 0:1]
+        yj = x_j[:, 1:2]
+
+        vxi = x_i[:, 2:3]
+        vyi = x_i[:, 3:4]
+
+        vxj = x_j[:, 2:3]
+        vyj = x_j[:, 3:4]
+
+        erki = x_i[:,4:5]
+        erkj = x_j[:,4:5]
+
+
+        dx = xj - xi
+        dy = yj - yi
+        dvx = vxj - vxi
+        dvy = vyj - vyi
+
+
+        diff_erk = erkj - erki
+
+        cell_id =x_i[:, 1].detach().cpu().numpy()
+        coeff=model.a[cell_id,:]
+
+        if self.msg==0:
+            x = diff_erk*0
+        elif mself.msg==1:
+            x = torch.cat((edge_feature, dx*coeff[:,0:1], dy*coeff[:,0:1], dvx*coeff[:,1:2], dvy*coeff[:,1:2]), dim=-1)
+        elif self.msg==2:
+            x = torch.cat((edge_feature, dx*coeff[:,0:1], dy*coeff[:,0:1], dvx*coeff[:,1:2], dvy*coeff[:,1:2], diff_erk), dim=-1)
+        else: # model_config['msg']==3:
+            x = diff_erk*0
+
+        x = self.lin_edge(x)
+        self.new_edges = x
+
+        return x
+class InteractionNetworkEmb(pyg.nn.MessagePassing):
+    """Interaction Network as proposed in this paper:
+    https://proceedings.neurips.cc/paper/2016/hash/3147da8ab4a0437c15ef51a5cc7f2dc4-Abstract.html"""
+    def __init__(self, layers, embedding, device, h):
+        super().__init__(aggr='add')  # "Add" aggregation.
+
+        self.h = h
+        self.layers = layers
+        self.device =device
+        self.embedding = embedding
+
+        self.lin_edge = MLP2(input_size=3*self.embedding, hidden_size=3*self.embedding, output_size=self.embedding, layers= self.layers, device=self.device)
+
+        if self.h == 0:
+            self.lin_node = MLP2(input_size=2*self.embedding, hidden_size=2*self.embedding, output_size=self.embedding, layers= self.layers, device=self.device)
+        else:
+            self.lin_node = MLP2(input_size=64, hidden_size=self.embedding, output_size=self.embedding, layers= self.layers, device=self.device)
+            self.rnn = torch.nn.GRUCell(14, 64,device=self.device,dtype=torch.float64)
+
+    def forward(self, x, edge_index, edge_feature):
+
+        aggr = self.propagate(edge_index, x=(x, x), edge_feature=edge_feature)
+
+        if self.h==0:
+            node_out = self.lin_node(torch.cat((x, aggr), dim=-1))
+            node_out = x + node_out
+            edge_out = edge_feature + self.new_edges
+
+        else:
+            super_x=torch.cat((x, aggr), dim=-1)
+            self.state = self.rnn(super_x,self.state)
+            node_out = self.lin_node(self.state)
+            edge_out = edge_feature + self.new_edges
+
+        return node_out, edge_out
+
+    def message(self, x_i, x_j, edge_feature):
+
+        x = torch.cat((edge_feature, x_i, x_j ), dim=-1)
+
+        x = self.lin_edge(x)
+        self.new_edges = x
+
+        return x
+class ResNetGNN(torch.nn.Module):
+    """Graph Network-based Simulators(GNS)"""
+
+    def __init__(self, model_config, device):
+        super().__init__()
+
+        self.hidden_size = model_config['hidden_size']
+        self.embedding = model_config['embedding']
+        self.nlayers = model_config['n_mp_layers']
+        self.h = model_config['h']
+        self.noise_level = model_config['noise_level']
+        self.n_tracks = model_config['n_tracks']
+        self.msg = model_config['msg']
+        self.device = device
+        self.output_angle = model_config['output_angle']
+
+        self.edge_init = EdgeNetwork(self.hidden_size, layers=3)
+
+        if self.embedding > 0:
+            self.layer = torch.nn.ModuleList(
+                [InteractionNetworkEmb(layers=3, embedding=self.embedding, h=self.h, device=self.device) for _ in
+                 range(self.nlayers)])
+            self.node_out = MLP2(input_size=self.embedding, hidden_size=self.hidden_size, output_size=1, layers=3,
+                                device=self.device)
+        else:
+            self.layer = torch.nn.ModuleList([InteractionNetwork(hidden_size=self.hidden_size, layers=3, h=self.h,
+                                                                 msg=self.msg, device=self.device) for _ in
+                                              range(self.nlayers)])
+            self.node_out = MLP2(input_size=7, hidden_size=self.hidden_size, output_size=1, layers=3,
+                                device=self.device)
+
+        self.a = nn.Parameter(
+            torch.tensor(np.ones((3, int(self.n_tracks + 1), 3)), requires_grad=False, device=self.device))
+        self.t = nn.Parameter(
+            torch.tensor(np.ones((3, int(self.n_tracks + 1), 3)), requires_grad=False, device=self.device))
+
+        self.h_all = torch.zeros((int(self.n_tracks + 1), 64), requires_grad=False, device=self.device,dtype=torch.float64)
+
+        if self.embedding > 0:
+            self.embedding_node = MLP2(input_size=5 + 3, hidden_size=self.embedding, output_size=self.embedding,
+                                      layers=3, device=self.device)
+            self.embedding_edges = MLP2(input_size=5, hidden_size=self.embedding, output_size=self.embedding,
+                                       layers=3, device=self.device)
+
+    def forward(self, data, data_id):
+
+        node_feature = torch.cat((data.x[:, 2:6], data.x[:, 8:9]), dim=-1)
+        noise = torch.randn((node_feature.shape[0], node_feature.shape[1]), requires_grad=False,
+                            device=self.device) * self.noise_level
+        node_feature = node_feature + noise
+        edge_feature = self.edge_init(node_feature, data.edge_index, edge_feature=data.edge_attr)
+
+        if self.embedding > 0:
+            cell_embedding = self.a[data_id, data.x[:, 1].detach().cpu().numpy(), :]
+            node_feature = self.embedding_node(torch.cat((node_feature, cell_embedding), dim=-1))
+            edge_feature = self.embedding_edges(edge_feature)
+
+        for i in range(self.nlayers):
+            node_feature, edge_feature = self.layer[i](node_feature, data.edge_index, edge_feature=edge_feature)
+
+        pred = self.node_out(node_feature)
+
+        return pred
+
+def train_model_ResNet(model_config=None, trackmate=None):
+
+    print('ntry: ', model_config['ntry'])
+    if model_config['h'] == 0:
+        print('no GRUcell ')
+    elif model_config['h'] == 1:
+        print('with GRUcell ')
+    if (model_config['msg'] == 0) | (model_config['embedding'] > 0):
+        print('msg: 0')
+    elif model_config['msg'] == 1:
+        print('msg: MLP2(x_jp, y_jp, vx_p, vy_p, ux, uy)')
+    elif model_config['msg'] == 2:
+        print('msg: MLP2(x_jp, y_jp, vx_p, vy_p, ux, uy, diff erkj)')
+    elif model_config['msg'] == 3:
+        print('msg: MLP2(diff_erk)')
+    else:  # model_config['msg']==4:
+        print('msg: 0')
+    bRollout = model_config['bRollout']
+    output_angle = model_config['output_angle']
+    print('embedding: ', model_config['embedding'])
+    print('hidden_size: ', model_config['hidden_size'])
+    print('n_mp_layers: ', model_config['n_mp_layers'])
+    print('noise_level: ', model_config['noise_level'])
+    print('bRollout: ', model_config['bRollout'])
+    print('rollout_window: ', model_config['rollout_window'])
+    print(f'batch size: ', model_config['batch_size'])
+    print('remove_update_U: ', model_config['remove_update_U'])
+    print('output_angle: ', model_config['output_angle'])
+    print('train_MLPs: ', model_config['train_MLPs'])
+
+    l_dir = os.path.join('.', 'log')
+    log_dir = os.path.join(l_dir, 'try_{}'.format(ntry))
+    os.makedirs(log_dir, exist_ok=True)
+    os.makedirs(os.path.join(log_dir, 'models'), exist_ok=True)
+    os.makedirs(os.path.join(log_dir, 'data', 'val_outputs'), exist_ok=True)
+    copyfile(os.path.realpath(__file__), os.path.join(log_dir, 'training_code.py'))
+
+    model = ResNetGNN(model_config=model_config, device=device)
+    # state_dict = torch.load(f"./log/try_{ntry}/models/best_model.pt")
+    # model.load_state_dict(state_dict['model_state_dict'])
+
+    print('model = ResNetGNN()   predict derivative Erk ')
+
+    if model_config['train_MLPs'] == False:
+        print('No MLP2s training watch out')
+        state_dict = torch.load(f"./log/try_421/models/best_model_new_emb_concatenate.pt")
+        model.load_state_dict(state_dict['model_state_dict'])
+        for param in model.layer.parameters():
+            param.requires_grad = False
+        for param in model.node_out.parameters():
+            param.requires_grad = False
+        for param in model.embedding_node.parameters():
+            param.requires_grad = False
+        for param in model.embedding_edges.parameters():
+            param.requires_grad = False
+
+        table = PrettyTable(["Modules", "Parameters"])
+        total_params = 0
+        for name, parameter in model.layer.named_parameters():
+            if not parameter.requires_grad:
+                continue
+            param = parameter.numel()
+            table.add_row([name, param])
+            total_params += param
+        print(table)
+        print(f"Total Trainable Params: {total_params}")
+        table = PrettyTable(["Modules", "Parameters"])
+        total_params = 0
+        for name, parameter in model.node_out.named_parameters():
+            if not parameter.requires_grad:
+                continue
+            param = parameter.numel()
+            table.add_row([name, param])
+            total_params += param
+        print(table)
+        print(f"Total Trainable Params: {total_params}")
+        table = PrettyTable(["Modules", "Parameters"])
+        total_params = 0
+        for name, parameter in model.embedding_node.named_parameters():
+            if not parameter.requires_grad:
+                continue
+            param = parameter.numel()
+            table.add_row([name, param])
+            total_params += param
+        print(table)
+        print(f"Total Trainable Params: {total_params}")
+        table = PrettyTable(["Modules", "Parameters"])
+        total_params = 0
+        for name, parameter in model.embedding_edges.named_parameters():
+            if not parameter.requires_grad:
+                continue
+            param = parameter.numel()
+            table.add_row([name, param])
+            total_params += param
+        print(table)
+        print(f"Total Trainable Params: {total_params}")
+
+    if model_config['cell_embedding'] == 0:
+        model.a.requires_grad = False
+        model.t.requires_grad = False
+        print('embedding: a false t false')
+    elif model_config['cell_embedding'] == 1:
+        model.a.requires_grad = True
+        model.t.requires_grad = False
+        print('embedding: a true t false')
+    else:  # model_config['cell_embedding']=2
+        model.a.requires_grad = True
+        model.t.requires_grad = True
+        print('embedding: a true t true')
+
+    optimizer = torch.optim.Adam(model.parameters(), lr=1E-3)  # , weight_decay=5e-3)
+    criteria = nn.MSELoss()
+    model.train()
+
+    print('Training model = ResNetGNN() ...')
+
+    # ff = 0
+    # print(file_list[ff])
+    # trackmate = trackmate_list[ff].copy()
+    # trackmate_true = trackmate_list[ff].copy()
+
+    trackmate_true = []
+    trackmate_true = trackmate.copy()
+
+
+    best_loss = np.inf
+
+    for epoch in range(1000):
+
+        if epoch == 100:
+            optimizer = torch.optim.Adam(model.parameters(), lr=1E-4)  # , weight_decay=5e-3)
+
+        mserr_list = []
+
+        trackmate = trackmate_true.copy()
+
+        for frame in range(20, 240):  # frame_list:
+
+            pos = np.argwhere(trackmate[:, 0] == frame)
+
+            list_all = pos[:, 0].astype(int)
+            mask = torch.tensor(np.ones(list_all.shape[0]), device=device)
+            for k in range(len(mask)):
+                if trackmate[list_all[k] - 1, 1] != trackmate[list_all[k] + 1, 1]:
+                    mask[k] = 0
+                if (trackmate[list_all[k], 2] < -0.45) | (trackmate[list_all[k], 3] < -0.52) | (
+                        trackmate[list_all[k], 3] > 0.55):
+                    mask[k] = 0
+            mask = mask[:, None]
+
+            x = torch.tensor(trackmate[list_all, 0:17], device=device)
+            target = torch.tensor(trackmate_true[list_all + 1, 8:9], device=device)
+
+            dataset = data.Data(x=x, pos=x[:, 2:4])
+            transform = T.Compose([T.Delaunay(), T.FaceToEdge(), T.Distance(norm=False)])
+            dataset = transform(dataset)
+            distance = dataset.edge_attr.detach().cpu().numpy()
+            pos = np.argwhere(distance < model_config['radius'])
+            edges = dataset.edge_index
+            dataset = data.Data(x=x, edge_index=edges[:, pos[:, 0]],
+                                edge_attr=torch.tensor(distance[pos[:, 0]], device=device))
+
+            optimizer.zero_grad()
+            pred = model(data=dataset, data_id=0)
+
+            loss = criteria((pred[:, :] + x[:, 8:9]) * mask, target * mask) * 3
+
+            loss.backward()
+            optimizer.step()
+            mserr_list.append(loss.item())
+
+            trackmate[list_all + 1, 10:11] = np.array(pred.detach().cpu())
+            trackmate[list_all + 1, 8:9] = trackmate[list_all, 8:9] + trackmate[list_all + 1, 10:11]
+
+        print(f"Epoch: {epoch} Loss: {np.round(np.mean(mserr_list), 4)}")
+
+        if (np.mean(mserr_list) < best_loss):
+            best_loss = np.mean(mserr_list)
+            torch.save({'model_state_dict': model.state_dict(), 'optimizer_state_dict': optimizer.state_dict()},
+                       os.path.join(log_dir, 'models', 'best_model_new.pt'))
+
+
+
+
 if __name__ == "__main__":
 
     device = torch.device("cuda:1" if torch.cuda.is_available() else "cpu")
@@ -931,7 +1455,70 @@ if __name__ == "__main__":
                     'frame_start': 20,
                     'frame_end': [241],
                     'n_tracks': 0,
-                    'radius': 0.15}
+                    'radius': 0.15,
+                    'output_angle': False,
+                    'remove_update_U': True,
+                    'train_MLPs': True}
+
+    model_config = {'ntry': 502,
+                    'datum': '2309012_490',
+                    'trackmate_metric' : {'Label': 0,
+                    'Spot_ID': 1,
+                    'Track_ID': 2,
+                    'Quality': 3,
+                    'X': 4,
+                    'Y': 5,
+                    'Z': 6,
+                    'T': 7,
+                    'Frame': 8,
+                    'R': 9,
+                    'Visibility': 10,
+                    'Spot color': 11,
+                    'Mean Ch1': 12,
+                    'Median Ch1': 13,
+                    'Min Ch1': 14,
+                    'Max Ch1': 15,
+                    'Sum Ch1': 16,
+                    'Std Ch1': 17,
+                    'Ctrst Ch1': 18,
+                    'SNR Ch1': 19,
+                    'El. x0': 20,
+                    'El. y0': 21,
+                    'El. long axis': 22,
+                    'El. sh. axis': 23,
+                    'El. angle': 24,
+                    'El. a.r.': 25,
+                    'Area': 26,
+                    'Perim.': 27,
+                    'Circ.': 28,
+                    'Solidity': 29,
+                    'Shape index': 30},
+                    'metric_list' : ['Frame', 'Track_ID', 'X', 'Y', 'Mean Ch1', 'Area'],
+                    'file_folder' : '/home/allierc@hhmi.org/Desktop/signaling/HGF-ERK signaling/fig 1/B_E/210105/trackmate/',
+                    'dx':0.908,
+                    'dt':5.0,
+                    'h': 0,
+                    'msg': 1,
+                    'aggr': 0,
+                    'rot_mode':1,
+                    'embedding': 128,
+                    'cell_embedding': 1,
+                    'time_embedding': False,
+                    'n_mp_layers': 5,
+                    'hidden_size': 32,
+                    'bNoise': False,
+                    'noise_level': 0,
+                    'batch_size': 8,
+                    'bRollout': False,
+                    'rollout_window': 2,
+                    'frame_start': 20,
+                    'frame_end': [241],
+                    'n_tracks': 0,
+                    'radius': 0.15,
+                    'output_angle': False,
+                    'remove_update_U': True,
+                    'train_MLPs': True}
+
 
     trackmate_metric = model_config['trackmate_metric']
     print('')
@@ -956,7 +1543,11 @@ if __name__ == "__main__":
 
     # train_model(model_config, trackmate)
 
-    test_model(bVisu=False, bMinimization=False)
+    # test_model(bVisu=False, bMinimization=False, net_type='InteractionParticlesRollout')
+
+    # train_model_ResNet(model_config, trackmate)
+
+    test_model(bVisu=True, bMinimization=False, net_type='ResNetGNN')
 
 
 

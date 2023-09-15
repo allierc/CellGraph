@@ -427,7 +427,7 @@ if __name__ == "__main__":
     print('... done')
 
 
-    model_config = {'ntry': 421,
+    model_config = {'ntry': 420,
                     'h': 0,
                     'msg': 1,
                     'embedding': 128,
