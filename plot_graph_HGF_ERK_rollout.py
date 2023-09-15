@@ -67,6 +67,17 @@ def test_model(bVisu=False, bMinimization=False):
     state_dict = torch.load(f"./log/try_{ntry}/models/best_model_new.pt")
     model.load_state_dict(state_dict['model_state_dict'])
 
+    table = PrettyTable(["Modules", "Parameters"])
+    total_params = 0
+    for name, parameter in model.named_parameters():
+        if not parameter.requires_grad:
+            continue
+        param = parameter.numel()
+        table.add_row([name, param])
+        total_params += param
+    print(table)
+    print(f"Total Trainable Params: {total_params}")
+
     criteria = nn.MSELoss()
     model.eval()
 
@@ -85,8 +96,8 @@ def test_model(bVisu=False, bMinimization=False):
     R2speed = []
 
     message_track = np.zeros((trackmate.shape[0], 2))
-    # I = imread(f'{file_folder}/ACTIVITY.tif')
-    # I = np.array(I)
+    I = imread(f'{file_folder}/../ACTIVITY.tif')
+    I = np.array(I)
 
     for frame in tqdm(range(20, 240)):  # frame_list:
 
@@ -103,9 +114,9 @@ def test_model(bVisu=False, bMinimization=False):
             #    mask[k] = 0
         mask = mask[:, None]
 
-        x = torch.tensor(trackmate[list_all, 0:14], device=device)
+        x = torch.tensor(trackmate[list_all, 0:17], device=device)
 
-        target = torch.tensor(trackmate_true[list_all + 1, 4:5], device=device)
+        target = torch.tensor(trackmate_true[list_all + 1, 8:9], device=device)
         target_pos = torch.tensor(trackmate_true[list_all, 2:4], device=device)
 
         dataset = data.Data(x=x, pos=x[:, 2:4])
@@ -119,16 +130,16 @@ def test_model(bVisu=False, bMinimization=False):
 
         message, pred = model(data=dataset, data_id=0)
 
-        loss = criteria((pred[:, :] + x[:, 4:5]) * mask * nstd[4], target * mask * nstd[4])
+        loss = criteria((pred[:, :] + x[:, 8:9]) * mask * nstd[8], target * mask * nstd[8])
 
         for k in range(len(mask)):
             if mask[k] == 1:
-                trackmate[list_all[k] + 1, 8:9] = np.array(pred[k].detach().cpu())
-                trackmate[list_all[k] + 1, 4:5] = trackmate[list_all[k], 4:5] + trackmate[list_all[k] + 1, 8:9]
+                trackmate[list_all[k] + 1, 10:11] = np.array(pred[k].detach().cpu())
+                trackmate[list_all[k] + 1, 8:9] = trackmate[list_all[k], 8:9] + trackmate[list_all[k] + 1, 10:11]
 
         rmserr_list.append(np.sqrt(loss.item()))
         xx = target.detach().cpu().numpy()
-        yy = pred + x[:, 4:5]
+        yy = pred + x[:, 8:9]
         yy = yy.detach().cpu().numpy()
         model_lin.fit(xx, yy)
         R2model.append(model_lin.score(xx, yy))
@@ -138,14 +149,14 @@ def test_model(bVisu=False, bMinimization=False):
 
         pos = np.argwhere(trackmate[list_all, 1] == 100)
         if len(pos) > 0:
-            true_ERK1.append(trackmate_true[list_all[pos[0]] + 1, 4])
-            model_ERK1.append(trackmate[list_all[pos[0]] + 1, 4])
+            true_ERK1.append(trackmate_true[list_all[pos[0]] + 1, 8])
+            model_ERK1.append(trackmate[list_all[pos[0]] + 1, 8])
         pos = np.argwhere(trackmate[list_all, 1] == 200)
         if len(pos) > 0:
-            true_ERK2.append(trackmate_true[list_all[pos[0]] + 1, 4])
-            model_ERK2.append(trackmate[list_all[pos[0]] + 1, 4])
+            true_ERK2.append(trackmate_true[list_all[pos[0]] + 1, 8])
+            model_ERK2.append(trackmate[list_all[pos[0]] + 1, 8])
 
-        if bVisu:  # frame == 200:
+        if bVisu: #frame == 200:
 
             # print(f'{frame} {np.round(loss.item(), 3)}  {np.round(model_lin.score(xx, yy), 3)} mask {np.round(torch.sum(mask).item() / mask.shape[0], 3)}')
 
@@ -161,7 +172,7 @@ def test_model(bVisu=False, bMinimization=False):
 
             ax = fig.add_subplot(3, 5, 2)
             plt.scatter(trackmate[list_all + 1, 2], trackmate[list_all + 1, 3], s=125, marker='.',
-                        c=(x[:, 4:5] + pred).detach().cpu().numpy(), vmin=-0.6, vmax=0.6)
+                        c=(x[:, 8:9] + pred).detach().cpu().numpy(), vmin=-0.6, vmax=0.6)
             plt.xlim([-0.6, 0.95])
             plt.ylim([-0.6, 0.6])
             plt.text(-0.6, 0.7, 'Model ERK', fontsize=12)
@@ -197,30 +208,30 @@ def test_model(bVisu=False, bMinimization=False):
             plt.xlabel('Frame [a.u.]', fontsize=12)
             plt.ylabel('R2 coeff. [a.u.]', fontsize=12)
             xx = target.detach().cpu().numpy()
-            yy = trackmate[list_all, 13:14]
+            yy = trackmate[list_all, 14:15]
             model_lin.fit(xx, yy)
             R2c.append(model_lin.score(xx, yy))
             plt.plot(np.arange(20, 20 + len(R2c)), np.array(R2c), 'b', label='Cell density')
-            yy = trackmate[list_all, 11:12]
+            yy = trackmate[list_all, 12:13]
             model_lin.fit(xx, yy)
             R2area.append(model_lin.score(xx, yy))
             plt.plot(np.arange(20, 20 + len(R2area)), np.array(R2area), 'g', label='Cell area')
-            yy = trackmate[list_all, 5:6]
+            yy = trackmate[list_all, 8:9]
             model_lin.fit(xx, yy)
             R2narea.append(model_lin.score(xx, yy))
-            plt.plot(np.arange(20, 20 + len(R2narea)), np.array(R2narea), 'r', label='Cell area')
-            yy = np.sqrt(trackmate[list_all, 6:7] ** 2 + trackmate[list_all, 7:8] ** 2)
+            plt.plot(np.arange(20, 20 + len(R2narea)), np.array(R2narea), 'r', label='Signal 2')
+            yy = np.sqrt(trackmate[list_all, 4:5] ** 2 + trackmate[list_all, 5:6] ** 2)
             model_lin.fit(xx, yy)
             R2speed.append(model_lin.score(xx, yy))
             plt.plot(np.arange(20, 20 + len(R2speed)), np.array(R2speed), 'c', label='Cell velocity')
             plt.legend(loc='upper left', fontsize=12)
 
             ax = fig.add_subplot(3, 5, 5)
-            plt.scatter(trackmate_true[list_all + 1, 4:5], trackmate[list_all + 1, 4:5], s=1, c='k')
+            plt.scatter(trackmate_true[list_all + 1, 8:9], trackmate[list_all + 1, 8:9], s=1, c='k')
             plt.xlim([-1.1, 1.1])
             plt.ylim([-1.1, 1.1])
             xx = target.detach().cpu().numpy()
-            yy = (x[:, 4:5] + pred).detach().cpu().numpy()
+            yy = (x[:, 8:9] + pred).detach().cpu().numpy()
             model_lin.fit(xx, yy)
             plt.text(-1, 1.3,
                      f"R2: {np.round(model_lin.score(xx, yy), 3)}   slope: {np.round(model_lin.coef_[0][0], 2)}   N: {xx.shape[0]}",
@@ -239,7 +250,7 @@ def test_model(bVisu=False, bMinimization=False):
             xx0 = x.detach().cpu() * nstd[2]
             xx0[:, 0] = xx0[:, 2] + nmean[2]
             xx0[:, 1] = xx0[:, 3] + nmean[3]
-            xx0 = xx0[:, 0:2]
+            xx0 = xx0[:, 0:2] / dx
             pos = np.argwhere(trackmate[list_all + 1, 1] == 100)
             if len(pos) > 0:
                 cx = xx0[pos[0], 0]
@@ -270,9 +281,7 @@ def test_model(bVisu=False, bMinimization=False):
                 e = e.detach().cpu().numpy()
                 points = np.concatenate((e, xx0[pos[0], :].detach().cpu().numpy()))
                 vor = Voronoi(points)
-
                 regions, vertices = voronoi_finite_polygons_2d(vor)
-
                 pts = MultiPoint([Point(i) for i in points])
                 mask = pts.convex_hull
                 new_vertices = []
@@ -286,18 +295,18 @@ def test_model(bVisu=False, bMinimization=False):
                 plt.fill(*zip(*poly), c='w', alpha=0.5)
 
                 for k in list_all:
-                    plt.arrow(x=trackmate[k, 2] * nstd[2] + nmean[2], y=trackmate[k, 3] * nstd[2] + nmean[3],
-                              dx=trackmate[k, 46] * nstd[6], dy=trackmate[k, 47] * nstd[6], head_width=2,
+                    plt.arrow(x=(trackmate[k, 2] * nstd[2] + nmean[2])/dx, y=(trackmate[k, 3] * nstd[2] + nmean[3])/dx,
+                              dx=trackmate[k, 24] * nstd[4] * 2 * dt, dy=trackmate[k, 25] * nstd[5] * 2 * dt, head_width=2,
                               length_includes_head=True)
-                    plt.arrow(x=trackmate[k, 2] * nstd[2] + nmean[2] - trackmate[k, 6] * nstd[6] * 2,
-                              y=trackmate[k, 3] * nstd[2] + nmean[3] - trackmate[k, 7] * nstd[6] * 2,
-                              dx=trackmate[k, 6] * nstd[6] * 2, dy=trackmate[k, 7] * nstd[6] * 2, head_width=2,
+                    plt.arrow(x=(trackmate[k, 2] * nstd[2] + nmean[2])/dx - trackmate[k, 4] * nstd[4] * 2 * dt,
+                              y=(trackmate[k, 3] * nstd[2] + nmean[3])/dx - trackmate[k, 5] * nstd[5] * 2 * dt,
+                              dx=trackmate[k, 4] * nstd[4] * 2 * dt, dy=trackmate[k, 5] * nstd[5] * 2 * dt, head_width=2,
                               alpha=0.5, length_includes_head=True)
 
             ax = fig.add_subplot(3, 5, 7)
-            plt.plot(np.arange(20, 20 + len(true_ERK1)), np.array(true_ERK1) * nstd[4] + nmean[4], 'g',
+            plt.plot(np.arange(20, 20 + len(true_ERK1)), np.array(true_ERK1) * nstd[8] + nmean[8], 'g',
                      label='True ERK')
-            plt.plot(np.arange(20, 20 + len(model_ERK1)), np.array(model_ERK1) * nstd[4] + nmean[4], 'k',
+            plt.plot(np.arange(20, 20 + len(model_ERK1)), np.array(model_ERK1) * nstd[8] + nmean[8], 'k',
                      label='Model ERK')
             plt.ylim([1, 2])
             plt.xlim([0, 240])
@@ -312,7 +321,7 @@ def test_model(bVisu=False, bMinimization=False):
             plt.plot(trackmate[pos[ppos, 0], 0], trackmate[pos[ppos, 0], 12], 'g',
                      label='Norm. Perimeter')
             plt.plot(trackmate[pos[ppos, 0], 0],
-                     np.sqrt(trackmate[pos[ppos, 0], 6] ** 2 + trackmate[pos[ppos, 0], 7] ** 2), 'm',
+                     np.sqrt(trackmate[pos[ppos, 0], 4] ** 2 + trackmate[pos[ppos, 0], 7] ** 2), 'm',
                      label='Norm. velocity')
             plt.ylim([-1, 1])
             plt.xlim([0, 240])
@@ -367,20 +376,22 @@ def test_model(bVisu=False, bMinimization=False):
                     poly = np.array(list(zip(p.boundary.coords.xy[0][:-1], p.boundary.coords.xy[1][:-1])))
                     new_vertices.append(poly)
                 plt.fill(*zip(*poly), c='w', alpha=0.5)
-            for k in list_all:
-                plt.arrow(x=trackmate[k, 2] * nstd[2] + nmean[2], y=trackmate[k, 3] * nstd[2] + nmean[3],
-                          dx=trackmate[k, 46] * nstd[6] * 2, dy=trackmate[k, 47] * nstd[6] * 2, head_width=2,
-                          length_includes_head=True)
-                plt.arrow(x=trackmate[k, 2] * nstd[2] + nmean[2] - trackmate[k, 6] * nstd[6] * 2,
-                          y=trackmate[k, 3] * nstd[2] + nmean[3] - trackmate[k, 7] * nstd[6] * 2,
-                          dx=trackmate[k, 6] * nstd[6] * 2, dy=trackmate[k, 7] * nstd[6] * 2, head_width=2,
-                          alpha=0.5,
-                          length_includes_head=True)
+                for k in list_all:
+                        plt.arrow(x=(trackmate[k, 2] * nstd[2] + nmean[2]) / dx,
+                                  y=(trackmate[k, 3] * nstd[2] + nmean[3]) / dx,
+                                  dx=trackmate[k, 24] * nstd[4] * 2 * dt, dy=trackmate[k, 25] * nstd[5] * 2 * dt,
+                                  head_width=2,
+                                  length_includes_head=True)
+                        plt.arrow(x=(trackmate[k, 2] * nstd[2] + nmean[2]) / dx - trackmate[k, 4] * nstd[4] * 2 * dt,
+                                  y=(trackmate[k, 3] * nstd[2] + nmean[3]) / dx - trackmate[k, 5] * nstd[5] * 2 * dt,
+                                  dx=trackmate[k, 4] * nstd[4] * 2 * dt, dy=trackmate[k, 5] * nstd[5] * 2 * dt,
+                                  head_width=2,
+                                  alpha=0.5, length_includes_head=True)
 
             ax = fig.add_subplot(3, 5, 9)
-            plt.plot(np.arange(20, 20 + len(true_ERK2)), np.array(true_ERK2) * nstd[4] + nmean[4], 'g',
+            plt.plot(np.arange(20, 20 + len(true_ERK2)), np.array(true_ERK2) * nstd[8] + nmean[8], 'g',
                      label='True ERK')
-            plt.plot(np.arange(20, 20 + len(model_ERK2)), np.array(model_ERK2) * nstd[4] + nmean[4], 'k',
+            plt.plot(np.arange(20, 20 + len(model_ERK2)), np.array(model_ERK2) * nstd[8] + nmean[8], 'k',
                      label='Model ERK')
             plt.ylim([1, 2])
             plt.xlim([0, 240])
@@ -407,11 +418,11 @@ def test_model(bVisu=False, bMinimization=False):
 
             # plt.show()
 
-            plt.savefig(f"./ReconsGraph/Fig_{frame}.tif")
+            plt.savefig(f"./tmp_recons/Fig_{frame}.tif")
             plt.close()
 
     print(f"RMSE: {np.round(np.mean(rmserr_list), 3)} +/- {np.round(np.std(rmserr_list), 3)}     {np.round(np.mean(rmserr_list) / nstd[4] * 3, 1)} sigma ")
-    print(f"Erk: {np.round(nmean[4], 3)} +/- {np.round(nstd[4] / 3, 3)} ")
+    print(f"Erk: {np.round(nmean[8], 3)} +/- {np.round(nstd[8] / 3, 3)} ")
     print(f"R2: {np.round(np.mean(R2model), 3)} +/- {np.round(np.std(R2model), 3)} ")
     print('')
 
@@ -421,55 +432,114 @@ if __name__ == "__main__":
 
     print(f'Device :{device}')
 
-    model_config = {'ntry': 480,
-                    'datum': '2309012_470',
-                    'trackmate_metric' : {'Label': 0,
-                    'Spot_ID': 1,
-                    'Track_ID': 2,
-                    'Quality': 3,
-                    'X': 4,
-                    'Y': 5,
-                    'Z': 6,
-                    'T': 7,
-                    'Frame': 8,
-                    'R': 9,
-                    'Visibility': 10,
-                    'Spot color': 11,
-                    'Mean Ch1': 12,
-                    'Median Ch1': 13,
-                    'Min Ch1': 14,
-                    'Max Ch1': 15,
-                    'Sum Ch1': 16,
-                    'Std Ch1': 17,
-                    'Ctrst Ch1': 18,
-                    'SNR Ch1': 19,
-                    'El. x0': 20,
-                    'El. y0': 21,
-                    'El. long axis': 22,
-                    'El. sh. axis': 23,
-                    'El. angle': 24,
-                    'El. a.r.': 25,
-                    'Area': 26,
-                    'Perim.': 27,
-                    'Circ.': 28,
-                    'Solidity': 29,
-                    'Shape index': 30},
+    # model_config = {'ntry': 500,
+    #                 'datum': '2309012_490',
+    #                 'trackmate_metric' : {'Label': 0,
+    #                 'Spot_ID': 1,
+    #                 'Track_ID': 2,
+    #                 'Quality': 3,
+    #                 'X': 4,
+    #                 'Y': 5,
+    #                 'Z': 6,
+    #                 'T': 7,
+    #                 'Frame': 8,
+    #                 'R': 9,
+    #                 'Visibility': 10,
+    #                 'Spot color': 11,
+    #                 'Mean Ch1': 12,
+    #                 'Median Ch1': 13,
+    #                 'Min Ch1': 14,
+    #                 'Max Ch1': 15,
+    #                 'Sum Ch1': 16,
+    #                 'Std Ch1': 17,
+    #                 'Ctrst Ch1': 18,
+    #                 'SNR Ch1': 19,
+    #                 'El. x0': 20,
+    #                 'El. y0': 21,
+    #                 'El. long axis': 22,
+    #                 'El. sh. axis': 23,
+    #                 'El. angle': 24,
+    #                 'El. a.r.': 25,
+    #                 'Area': 26,
+    #                 'Perim.': 27,
+    #                 'Circ.': 28,
+    #                 'Solidity': 29,
+    #                 'Shape index': 30},
+    #
+    #                 'metric_list' : ['Frame', 'Track_ID', 'X', 'Y', 'Mean Ch1', 'Area'],
+    #
+    #                 'file_folder' : '/home/allierc@hhmi.org/Desktop/signaling/HGF-ERK signaling/fig 1/B_E/210105/trackmate/',
+    #
+    #                 'dx':0.908,
+    #                 'dt':5.0,
+    #                 'h': 0,
+    #                 'msg': 1,
+    #                 'aggr': 0,
+    #                 'rot_mode':1,
+    #                 'embedding': 3,
+    #                 'cell_embedding': 1,
+    #                 'time_embedding': False,
+    #                 'n_mp_layers': 3,
+    #                 'hidden_size': 32,
+    #                 'bNoise': False,
+    #                 'noise_level': 0,
+    #                 'batch_size': 4,
+    #                 'bRollout': False,
+    #                 'rollout_window': 2,
+    #                 'frame_start': 20,
+    #                 'frame_end': [241],
+    #                 'n_tracks': 0,
+    #                 'radius': 0.15}
 
-                    'metric_list' : ['Frame', 'Track_ID', 'X', 'Y', 'Mean Ch1', 'Area'],
+    model_config = {'ntry': 501,
+                    'datum': '2309012_490',
+                    'trackmate_metric': {'Label': 0,
+                                         'Spot_ID': 1,
+                                         'Track_ID': 2,
+                                         'Quality': 3,
+                                         'X': 4,
+                                         'Y': 5,
+                                         'Z': 6,
+                                         'T': 7,
+                                         'Frame': 8,
+                                         'R': 9,
+                                         'Visibility': 10,
+                                         'Spot color': 11,
+                                         'Mean Ch1': 12,
+                                         'Median Ch1': 13,
+                                         'Min Ch1': 14,
+                                         'Max Ch1': 15,
+                                         'Sum Ch1': 16,
+                                         'Std Ch1': 17,
+                                         'Ctrst Ch1': 18,
+                                         'SNR Ch1': 19,
+                                         'El. x0': 20,
+                                         'El. y0': 21,
+                                         'El. long axis': 22,
+                                         'El. sh. axis': 23,
+                                         'El. angle': 24,
+                                         'El. a.r.': 25,
+                                         'Area': 26,
+                                         'Perim.': 27,
+                                         'Circ.': 28,
+                                         'Solidity': 29,
+                                         'Shape index': 30},
 
-                    'file_folder' : '/home/allierc@hhmi.org/Desktop/signaling/HGF-ERK signaling/fig 1/B_E/210105/trackmate/',
+                    'metric_list': ['Frame', 'Track_ID', 'X', 'Y', 'Mean Ch1', 'Area'],
 
-                    'dx':0.908,
-                    'dt':5.0,
+                    'file_folder': '/home/allierc@hhmi.org/Desktop/signaling/HGF-ERK signaling/fig 1/B_E/210105/trackmate/',
+
+                    'dx': 0.908,
+                    'dt': 5.0,
                     'h': 0,
                     'msg': 1,
                     'aggr': 0,
-                    'rot_mode':1,
-                    'embedding': 3,
+                    'rot_mode': 1,
+                    'embedding': 8,
                     'cell_embedding': 1,
                     'time_embedding': False,
-                    'n_mp_layers': 3,
-                    'hidden_size': 32,
+                    'n_mp_layers': 5,
+                    'hidden_size': 128,
                     'bNoise': False,
                     'noise_level': 0,
                     'batch_size': 4,
@@ -499,15 +569,13 @@ if __name__ == "__main__":
 
     folder = f'./graphs_data/graphs_cells_{datum}/'
 
-    print('Loading trackmate ...')
-    trackmate_list=[]
-
     print('Loading trackmate file ...')
     trackmate = np.load(f'{folder}/transformed_spots.npy')
     trackmate[-1, 0] = -1
     nstd = np.load(f'{folder}/nstd.npy')
     nmean = np.load(f'{folder}/nmean.npy')
-    c = nstd[6] / nstd[2]
+    c0 = nstd[4] / nstd[2] * dt
+    c1 = nstd[6] / nstd[4]
     print('done ...')
     n_tracks = np.max(trackmate[:, 1])
     model_config['n_tracks'] = n_tracks+1
@@ -516,24 +584,38 @@ if __name__ == "__main__":
     print('Trackmate quality check...')
     time.sleep(0.5)
 
-    for k in tqdm(range(5, trackmate.shape[0] - 1)):
+    for k in tqdm(range(1, trackmate.shape[0] - 1)):
         if trackmate[k-1, 1] == trackmate[k+1, 1]:
 
-            if np.abs(trackmate[k+1, 6] * c - (trackmate[k+1, 2] - trackmate[k, 2])) > 1E-3:
+            if np.abs(trackmate[k+1, 4] * c0 - (trackmate[k+1, 2] - trackmate[k, 2])) > 1E-3:
                 print(f'Pb check vx at row {k}')
-            if np.abs(trackmate[k+1, 7] * c - (trackmate[k+1, 3] - trackmate[k, 3])) > 1E-3:
+            if np.abs(trackmate[k+1, 5] * c0 - (trackmate[k+1, 3] - trackmate[k, 3])) > 1E-3:
                 print(f'Pb check vy at row {k}')
 
-            if np.abs(trackmate[k+1, 15] - (trackmate[k+1, 6] - trackmate[k, 6])) > 1E-3:
+            if np.abs(trackmate[k+1, 6] * c1 - (trackmate[k+1, 4] - trackmate[k, 4])) > 1E-3:
                 print(f'Pb check accx at row {k}')
-            if np.abs(trackmate[k+1, 16] - (trackmate[k+1, 7] - trackmate[k, 7])) > 1E-3:
+            if np.abs(trackmate[k+1, 7] * c1 - (trackmate[k+1, 5] - trackmate[k, 5])) > 1E-3:
                 print(f'Pb check accy at row {k}')
 
     print('... done')
 
+    print('')
+    print(f'x {np.round(nmean[2], 1)}+/-{np.round(nstd[2], 1)}')
+    print(f'y {np.round(nmean[3], 1)}+/-{np.round(nstd[3], 1)}')
+    print(f'vx {np.round(nmean[4], 4)}+/-{np.round(nstd[4], 4)}')
+    print(f'vy {np.round(nmean[5], 4)}+/-{np.round(nstd[5], 4)}')
+    print(f'ax {np.round(nmean[6], 4)}+/-{np.round(nstd[6], 4)}')
+    print(f'ay {np.round(nmean[7], 4)}+/-{np.round(nstd[7], 4)}')
+    print(f'signal 1 {np.round(nmean[8], 2)}+/-{np.round(nstd[8], 2)}')
+    print(f'signal 2 {np.round(nmean[9], 2)}+/-{np.round(nstd[9], 2)}')
+    print(f'signal 1 deriv {np.round(nmean[10], 2)}+/-{np.round(nstd[10], 2)}')
+    print(f'signal 2 deriv {np.round(nmean[11], 2)}+/-{np.round(nstd[11], 2)}')
+    print(f'degree {np.round(nmean[16], 2)}+/-{np.round(nstd[16], 2)}')
+    print('')
 
 
-    test_model(bVisu=False, bMinimization=False)
+
+    test_model(bVisu=True, bMinimization=False)
 
 
 

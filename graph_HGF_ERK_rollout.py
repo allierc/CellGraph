@@ -169,7 +169,7 @@ class InteractionParticlesRollout(pyg.nn.MessagePassing):
 
         self.lin_update = MLP(input_size=1, hidden_size=16, output_size=1, layers=2, device=self.device)
 
-        self.a = nn.Parameter(torch.tensor(np.ones((3,int(self.n_tracks+1), 3)), requires_grad=False, device=self.device))
+        self.a = nn.Parameter(torch.tensor(np.ones((3,int(self.n_tracks+1), self.embedding)), requires_grad=False, device=self.device))
         self.t = nn.Parameter(torch.tensor(np.ones((3,241, 1)), requires_grad=True, device=self.device))
         # self.a = nn.Parameter(torch.tensor(np.ones((int(self.n_tracks), 3)), requires_grad=False, device=self.device))
         # self.t = nn.Parameter(torch.tensor(np.ones((241, 1)), device='cuda:0', requires_grad=True))
@@ -195,7 +195,7 @@ class InteractionParticlesRollout(pyg.nn.MessagePassing):
         coeff = self.b[self.data_id, cell_id]
 
         if self.h == 0 :
-            pred = self.lin_update(message[:,0:1]) - coeff[:,0:1]*(x[:,4:5]-coeff[:,1:2])
+            pred = self.lin_update(message[:,0:1]) - coeff[:,0:1]*(x[:,8:9]-coeff[:,1:2])
         elif self.h==1:
             pred = self.lin_update(message[:,0:1])
 
@@ -212,12 +212,12 @@ class InteractionParticlesRollout(pyg.nn.MessagePassing):
         yi=x_i[:, 3:4]
         xj=x_j[:, 2:3]
         yj=x_j[:, 3:4]
-        vxi=x_i[:, 6:7]
-        vyi=x_i[:, 7:8]
-        vxj=x_j[:, 6:7]
-        vyj=x_j[:, 7:8]
+        vxi=x_i[:, 4:5]
+        vyi=x_i[:, 5:6]
+        vxj=x_j[:, 4:5]
+        vyj=x_j[:, 5:6]
 
-        diff_erk = x_j[:, 4:5] / torch.clamp(torch.sqrt((x_i[:, 10:11] * self.nstd[10] + self.nmean[10]) * (x_j[:, 10:11] * self.nstd[10] + self.nmean[10])), min=1)
+        diff_erk = x_j[:, 8:9] / torch.clamp(torch.sqrt((x_i[:, 16:17] * self.nstd[16] + self.nmean[16]) * (x_j[:, 16:17] * self.nstd[16] + self.nmean[16])), min=1)
 
         if self.rot_mode == 0:
             x_jp = xj - xi
@@ -282,7 +282,7 @@ class InteractionParticlesRollout(pyg.nn.MessagePassing):
 
         return aggr_out     #self.lin_node(aggr_out)
 
-def train_model(trackmate=None):
+def train_model(model_config=None, trackmate=None):
 
     ntry = model_config['ntry']
     bRollout = model_config['bRollout']
@@ -340,6 +340,17 @@ def train_model(trackmate=None):
         model.a.requires_grad = True
         model.t.requires_grad = True
 
+    table = PrettyTable(["Modules", "Parameters"])
+    total_params = 0
+    for name, parameter in model.named_parameters():
+        if not parameter.requires_grad:
+            continue
+        param = parameter.numel()
+        table.add_row([name, param])
+        total_params += param
+    print(table)
+    print(f"Total Trainable Params: {total_params}")
+
     optimizer = torch.optim.Adam(model.parameters(), lr=1E-3)  # , weight_decay=5e-3)
     criteria = nn.MSELoss()
     model.train()
@@ -358,7 +369,7 @@ def train_model(trackmate=None):
 
     best_loss = np.inf
 
-    for epoch in range(1000):
+    for epoch in range(5000):
 
         if epoch == 100:
             optimizer = torch.optim.Adam(model.parameters(), lr=1E-4)  # , weight_decay=5e-3)
@@ -379,8 +390,8 @@ def train_model(trackmate=None):
                     mask[k] = 0
             mask = mask[:, None]
 
-            x = torch.tensor(trackmate[list_all, 0:14], device=device)
-            target = torch.tensor(trackmate_true[list_all + 1, 4:5], device=device)
+            x = torch.tensor(trackmate[list_all, 0:17], device=device)
+            target = torch.tensor(trackmate_true[list_all + 1, 8:9], device=device)
 
             dataset = data.Data(x=x, pos=x[:, 2:4])
             transform = T.Compose([T.Delaunay(), T.FaceToEdge(), T.Distance(norm=False)])
@@ -394,26 +405,23 @@ def train_model(trackmate=None):
             optimizer.zero_grad()
             message, pred = model(data=dataset, data_id=0)
 
-            loss = criteria((pred[:, :] + x[:, 4:5]) * mask, target * mask) * 3
+            loss = criteria((pred[:, :] + x[:, 8:9]) * mask, target * mask) * 3
 
             loss.backward()
             optimizer.step()
             mserr_list.append(loss.item())
 
-            trackmate[list_all + 1, 8:9] = np.array(pred.detach().cpu())
-            trackmate[list_all + 1, 4:5] = trackmate[list_all, 4:5] + trackmate[list_all + 1, 8:9]
+            trackmate[list_all + 1, 10:11] = np.array(pred.detach().cpu())
+            trackmate[list_all + 1, 8:9] = trackmate[list_all, 8:9] + trackmate[list_all + 1, 10:11]
 
         print(f"Epoch: {epoch} Loss: {np.round(np.mean(mserr_list), 4)}")
 
         if (np.mean(mserr_list) < best_loss):
             best_loss = np.mean(mserr_list)
-            torch.save({'model_state_dict': model.state_dict(), 'optimizer_state_dict': optimizer.state_dict()}, os.path.join(log_dir, 'models', 'best_model_new_emb_concatenate.pt'))
+            torch.save({'model_state_dict': model.state_dict(), 'optimizer_state_dict': optimizer.state_dict()}, os.path.join(log_dir, 'models', 'best_model_new.pt'))
 
     print(' end of training')
     print(' ')
-
-
-
 
 if __name__ == "__main__":
 
@@ -494,8 +502,8 @@ if __name__ == "__main__":
                     'n_tracks': 3561,
                     'radius': 0.15}
 
-    model_config = {'ntry': 490,
-                    'datum': '2309012_480',
+    model_config = {'ntry': 501,
+                    'datum': '2309012_490',
                     'trackmate_metric' : {'Label': 0,
                     'Spot_ID': 1,
                     'Track_ID': 2,
@@ -538,11 +546,11 @@ if __name__ == "__main__":
                     'msg': 1,
                     'aggr': 0,
                     'rot_mode':1,
-                    'embedding': 3,
+                    'embedding': 8,
                     'cell_embedding': 1,
                     'time_embedding': False,
-                    'n_mp_layers': 3,
-                    'hidden_size': 32,
+                    'n_mp_layers': 5,
+                    'hidden_size': 128,
                     'bNoise': False,
                     'noise_level': 0,
                     'batch_size': 4,
@@ -580,7 +588,8 @@ if __name__ == "__main__":
     trackmate[-1, 0] = -1
     nstd = np.load(f'{folder}/nstd.npy')
     nmean = np.load(f'{folder}/nmean.npy')
-    c = nstd[6] / nstd[2] * dt
+    c0 = nstd[4] / nstd[2] * dt
+    c1 = nstd[6] / nstd[4]
     print('done ...')
     n_tracks = np.max(trackmate[:, 1])
     model_config['n_tracks'] = n_tracks+1
@@ -589,44 +598,59 @@ if __name__ == "__main__":
     print('Trackmate quality check...')
     time.sleep(0.5)
 
-    for k in tqdm(range(0, trackmate.shape[0] - 1)):
+    for k in tqdm(range(1, trackmate.shape[0] - 1)):
         if trackmate[k-1, 1] == trackmate[k+1, 1]:
 
-            if np.abs(trackmate[k+1, 6] * c - (trackmate[k+1, 2] - trackmate[k, 2])) > 1E-3:
+            if np.abs(trackmate[k+1, 4] * c0 - (trackmate[k+1, 2] - trackmate[k, 2])) > 1E-3:
                 print(f'Pb check vx at row {k}')
-            if np.abs(trackmate[k+1, 7] * c - (trackmate[k+1, 3] - trackmate[k, 3])) > 1E-3:
+            if np.abs(trackmate[k+1, 5] * c0 - (trackmate[k+1, 3] - trackmate[k, 3])) > 1E-3:
                 print(f'Pb check vy at row {k}')
 
-            if np.abs(trackmate[k+1, 15] - (trackmate[k+1, 6] - trackmate[k, 6])) > 1E-3:
+            if np.abs(trackmate[k+1, 6] * c1 - (trackmate[k+1, 4] - trackmate[k, 4])) > 1E-3:
                 print(f'Pb check accx at row {k}')
-            if np.abs(trackmate[k+1, 16] - (trackmate[k+1, 7] - trackmate[k, 7])) > 1E-3:
+            if np.abs(trackmate[k+1, 7] * c1 - (trackmate[k+1, 5] - trackmate[k, 5])) > 1E-3:
                 print(f'Pb check accy at row {k}')
 
     print('... done')
 
+    print('')
+    print(f'x {np.round(nmean[2], 1)}+/-{np.round(nstd[2], 1)}')
+    print(f'y {np.round(nmean[3], 1)}+/-{np.round(nstd[3], 1)}')
+    print(f'vx {np.round(nmean[4], 4)}+/-{np.round(nstd[4], 4)}')
+    print(f'vy {np.round(nmean[5], 4)}+/-{np.round(nstd[5], 4)}')
+    print(f'ax {np.round(nmean[6], 4)}+/-{np.round(nstd[6], 4)}')
+    print(f'ay {np.round(nmean[7], 4)}+/-{np.round(nstd[7], 4)}')
+    print(f'signal 1 {np.round(nmean[8], 2)}+/-{np.round(nstd[8], 2)}')
+    print(f'signal 2 {np.round(nmean[9], 2)}+/-{np.round(nstd[9], 2)}')
+    print(f'signal 1 deriv {np.round(nmean[10], 2)}+/-{np.round(nstd[10], 2)}')
+    print(f'signal 2 deriv {np.round(nmean[11], 2)}+/-{np.round(nstd[11], 2)}')
+    print(f'degree {np.round(nmean[16], 2)}+/-{np.round(nstd[16], 2)}')
+    print('')
 
-    train_model(trackmate=trackmate)
 
-    model_config = {'ntry': 471,
-                    'h': 0,
-                    'msg': 2,
-                    'aggr': 0,
-                    'rot_mode':1,
-                    'embedding': 3,
-                    'cell_embedding': 1,
-                    'time_embedding': False,
-                    'n_mp_layers': 3,
-                    'hidden_size': 32,
-                    'bNoise': False,
-                    'noise_level': 0,
-                    'batch_size': 4,
-                    'bRollout': False,
-                    'rollout_window': 2,
-                    'frame_start': 20,
-                    'frame_end': [241, 228, 228],
-                    'n_tracks': 3561,
-                    'radius': 0.15}
-    train_model()
+
+    train_model(model_config, trackmate)
+
+    # model_config = {'ntry': 471,
+    #                 'h': 0,
+    #                 'msg': 2,
+    #                 'aggr': 0,
+    #                 'rot_mode':1,
+    #                 'embedding': 3,
+    #                 'cell_embedding': 1,
+    #                 'time_embedding': False,
+    #                 'n_mp_layers': 3,
+    #                 'hidden_size': 32,
+    #                 'bNoise': False,
+    #                 'noise_level': 0,
+    #                 'batch_size': 4,
+    #                 'bRollout': False,
+    #                 'rollout_window': 2,
+    #                 'frame_start': 20,
+    #                 'frame_end': [241, 228, 228],
+    #                 'n_tracks': 3561,
+    #                 'radius': 0.15}
+    # train_model()
 
     # model_config = {'ntry': 472,
     #                 'h': 0,

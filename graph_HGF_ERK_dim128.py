@@ -650,26 +650,26 @@ if __name__ == "__main__":
                     print(f'Pb check accy at row {k}')
     print('... done')
 
-    # model_config = {'ntry': 421,
-    #                 'h': 0,
-    #                 'msg': 1,
-    #                 'embedding': 128,
-    #                 'cell_embedding': 1,
-    #                 'train_MLPs': True,
-    #                 'output_angle': False,
-    #                 'n_mp_layers': 5,
-    #                 'hidden_size': 32,
-    #                 'noise_level': 0,
-    #                 'batch_size': 8,
-    #                 'bRollout': True,
-    #                 'rollout_window': 2,
-    #                 'remove_update_U': True,
-    #                 'frame_start': 20,
-    #                 'frame_end': [241, 228, 228],
-    #                 'n_tracks': 3561,
-    #                 'radius': 0.15}
-    #
-    # train_model()
+    model_config = {'ntry': 420,
+                    'h': 0,
+                    'msg': 1,
+                    'embedding': 128,
+                    'cell_embedding': 1,
+                    'train_MLPs': True,
+                    'output_angle': False,
+                    'n_mp_layers': 5,
+                    'hidden_size': 32,
+                    'noise_level': 0,
+                    'batch_size': 8,
+                    'bRollout': True,
+                    'rollout_window': 2,
+                    'remove_update_U': True,
+                    'frame_start': 20,
+                    'frame_end': [241, 228, 228],
+                    'n_tracks': 3561,
+                    'radius': 0.15}
+
+    train_model()
     #
     # model_config = {'ntry': 422,
     #                 'h': 0,
@@ -772,24 +772,24 @@ if __name__ == "__main__":
     #
     # train_model()
 
-    model_config = {'ntry': 425,
-                    'h': 0,
-                    'msg': 1,
-                    'embedding': 128,
-                    'cell_embedding': 0,
-                    'train_MLPs': True,
-                    'output_angle': False,
-                    'n_mp_layers': 5,
-                    'hidden_size': 32,
-                    'noise_level': 0,
-                    'batch_size': 8,
-                    'bRollout': True,
-                    'rollout_window': 2,
-                    'remove_update_U': True,
-                    'frame_start': 20,
-                    'frame_end': [241, 228, 228],
-                    'n_tracks': 3561,
-                    'radius': 0.15}
+    # model_config = {'ntry': 425,
+    #                 'h': 0,
+    #                 'msg': 1,
+    #                 'embedding': 128,
+    #                 'cell_embedding': 0,
+    #                 'train_MLPs': True,
+    #                 'output_angle': False,
+    #                 'n_mp_layers': 5,
+    #                 'hidden_size': 32,
+    #                 'noise_level': 0,
+    #                 'batch_size': 8,
+    #                 'bRollout': True,
+    #                 'rollout_window': 2,
+    #                 'remove_update_U': True,
+    #                 'frame_start': 20,
+    #                 'frame_end': [241, 228, 228],
+    #                 'n_tracks': 3561,
+    #                 'radius': 0.15}
 
     train_model()
 

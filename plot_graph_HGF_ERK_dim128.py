@@ -22,7 +22,7 @@ from scipy.ndimage import gaussian_filter
 import torch_geometric.transforms as T
 from sklearn.linear_model import LinearRegression
 from shapely.geometry import MultiPoint, Point, Polygon
-from graph_ERK_dim128 import *
+from graph_HGF_ERK_dim128 import *
 
 
 
@@ -445,7 +445,7 @@ if __name__ == "__main__":
                     'n_tracks': 3561,
                     'radius': 0.15}
 
-    test_model(bVisu=True)
+    test_model(bVisu=False)
 
     # model_config = {'ntry': 422,
     #                 'h': 0,
