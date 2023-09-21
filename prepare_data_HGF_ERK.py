@@ -489,7 +489,66 @@ if __name__ == "__main__":
                     'bRollout': False,
                     'rollout_window': 2,
                     'frame_start': 20,
-                    'frame_end': [241, 228, 228],
+                    'frame_end': 240,   # [240, 228, 228]
+                    'n_tracks': 3561,
+                    'radius': 0.15}
+
+    model_config = {'ntry': 491,
+                    'datum': '2309012_491',
+                    'trackmate_metric' : {'Label': 0,
+                    'Spot_ID': 1,
+                    'Track_ID': 2,
+                    'Quality': 3,
+                    'X': 4,
+                    'Y': 5,
+                    'Z': 6,
+                    'T': 7,
+                    'Frame': 8,
+                    'R': 9,
+                    'Visibility': 10,
+                    'Spot color': 11,
+                    'Mean Ch1': 12,
+                    'Median Ch1': 13,
+                    'Min Ch1': 14,
+                    'Max Ch1': 15,
+                    'Sum Ch1': 16,
+                    'Std Ch1': 17,
+                    'Ctrst Ch1': 18,
+                    'SNR Ch1': 19,
+                    'El. x0': 20,
+                    'El. y0': 21,
+                    'El. long axis': 22,
+                    'El. sh. axis': 23,
+                    'El. angle': 24,
+                    'El. a.r.': 25,
+                    'Area': 26,
+                    'Perim.': 27,
+                    'Circ.': 28,
+                    'Solidity': 29,
+                    'Shape index': 30},
+
+                    'metric_list' : ['Frame', 'Track_ID', 'X', 'Y', 'Mean Ch1', 'Area'],
+
+                    'file_folder' : '/home/allierc@hhmi.org/Desktop/signaling/HGF-ERK signaling/fig 1/B_E/210108/trackmate/',
+
+                    'dx':0.908,
+                    'dt':5.0,
+                    'h': 0,
+                    'msg': 1,
+                    'aggr': 0,
+                    'rot_mode':1,
+                    'embedding': 3,
+                    'cell_embedding': 1,
+                    'time_embedding': False,
+                    'n_mp_layers': 3,
+                    'hidden_size': 32,
+                    'bNoise': False,
+                    'noise_level': 0,
+                    'batch_size': 4,
+                    'bRollout': False,
+                    'rollout_window': 2,
+                    'frame_start': 20,
+                    'frame_end': 228,   # [240, 228, 228]
                     'n_tracks': 3561,
                     'radius': 0.15}
 
@@ -529,7 +588,7 @@ if __name__ == "__main__":
     radius = 0.05
 
     bMotility = True
-    frame_end=240
+    # frame_end=240
 
     l_dir = os.path.join('.', 'log')
     log_dir = os.path.join(l_dir, 'try_{}'.format(ntry))
@@ -540,9 +599,9 @@ if __name__ == "__main__":
 
     copyfile(os.path.realpath(__file__), os.path.join(log_dir, 'training_code.py'))
 
-    print (f'{file_folder}/trackmate/transformed_spots_try{ntry}.npy')
+    print (f'{file_folder}trackmate/transformed_spots_try{ntry}.npy')
 
-    if False:
+    if True:
 
         trackmate_csv = pd.read_csv(f'{file_folder}/spots.csv', header=3, usecols=trackmate_metric.values(),names=trackmate_metric.keys())
         n = 0
