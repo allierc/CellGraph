@@ -375,8 +375,8 @@ def train_model_Interaction_rollout(model_config=None, trackmate=None):
     model.nstd = nstd
     model.nmean = nmean
 
-    # state_dict = torch.load(f"./log/try_{ntry}/models/best_model.pt")
-    # model.load_state_dict(state_dict['model_state_dict'])
+    state_dict = torch.load(f"./log/try_{ntry}/models/best_model_new.pt")
+    model.load_state_dict(state_dict['model_state_dict'])
 
     if model_config['cell_embedding'] == 0:
         model.a.requires_grad = False
@@ -944,7 +944,6 @@ def train_model_ResNet(model_config=None, trackmate=None):
             best_loss = np.mean(mserr_list)
             torch.save({'model_state_dict': model.state_dict(), 'optimizer_state_dict': optimizer.state_dict()},
                        os.path.join(log_dir, 'models', 'best_model_new.pt'))
-
 def train_model(model_config=None, trackmate=None):
 
     net_type = model_config['net_type']
@@ -1064,7 +1063,7 @@ def test_model(bVisu=False, bMinimization=False, net_type='InteractionParticlesR
 
     trackmate_true = trackmate.copy()
 
-    for frame in tqdm(range(175, 240)):  # frame_list:
+    for frame in tqdm(range(20, 240)):  # frame_list:
 
         model.frame = int(frame)
         pos = np.argwhere(trackmate[:, 0] == frame)
@@ -1141,12 +1140,11 @@ def test_model(bVisu=False, bMinimization=False, net_type='InteractionParticlesR
             plt.ylim([-0.6, 0.6])
             plt.text(-0.6, 0.7, 'True ERK', fontsize=12)
 
-            ax = fig.add_subplot(3, 5, 11)
+            ax = fig.add_subplot(3, 5, 10)
             plt.scatter(trackmate_true[list_all + 1, 2], trackmate_true[list_all + 1, 3], s=50, marker='.',
                         c=mask.detach().cpu().numpy()+1)
             plt.xlim([-0.6, 0.95])
             plt.ylim([-0.6, 0.6])
-            plt.text(-0.6, 0.7, 'True ERK', fontsize=12)
 
             ax = fig.add_subplot(3, 5, 2)
             plt.scatter(trackmate[list_all + 1, 2], trackmate[list_all + 1, 3], s=125, marker='.',
@@ -1194,10 +1192,6 @@ def test_model(bVisu=False, bMinimization=False, net_type='InteractionParticlesR
             model_lin.fit(xx, yy)
             R2area.append(model_lin.score(xx, yy))
             plt.plot(np.arange(20, 20 + len(R2area)), np.array(R2area), 'g', label='Cell area')
-            yy = trackmate[list_all, 8:9]
-            model_lin.fit(xx, yy)
-            R2narea.append(model_lin.score(xx, yy))
-            plt.plot(np.arange(20, 20 + len(R2narea)), np.array(R2narea), 'r', label='Signal 2')
             yy = np.sqrt(trackmate[list_all, 4:5] ** 2 + trackmate[list_all, 5:6] ** 2)
             model_lin.fit(xx, yy)
             R2speed.append(model_lin.score(xx, yy))
@@ -1205,14 +1199,16 @@ def test_model(bVisu=False, bMinimization=False, net_type='InteractionParticlesR
             plt.legend(loc='upper left', fontsize=12)
 
             ax = fig.add_subplot(3, 5, 5)
-            plt.scatter(trackmate_true[list_all + 1, 8:9], trackmate[list_all + 1, 8:9], s=1, c='k')
+            pos = torch.argwhere(mask==1)
+            pos = pos[:,0].detach().cpu().numpy()
+            plt.scatter(trackmate_true[list_all[pos.astype(int)] + 1, 8:9], trackmate[list_all[pos.astype(int)] + 1, 8:9], s=1, c='k')
             plt.xlim([-1.1, 1.1])
             plt.ylim([-1.1, 1.1])
             xx = target.detach().cpu().numpy()
             yy = (x[:, 8:9] + pred).detach().cpu().numpy()
             model_lin.fit(xx, yy)
             plt.text(-1, 1.3,
-                     f"R2: {np.round(model_lin.score(xx, yy), 3)}   slope: {np.round(model_lin.coef_[0][0], 2)}   N: {xx.shape[0]}",
+                     f"R2: {np.round(model_lin.score(xx, yy), 3)}   slope: {np.round(model_lin.coef_[0][0], 2)}   N: {pos.shape[0]} / {xx.shape[0]}",
                      fontsize=12)
             plt.xlabel('True ERk [a.u]', fontsize=12)
             plt.ylabel('Model Erk [a.u]', fontsize=12)
@@ -1469,189 +1465,191 @@ if __name__ == "__main__":
                     'output_angle': False,
                     'remove_update_U': True,
                     'train_MLPs': True,
-                    'net_type':'InteractionParticlesRollout'}
+                    'net_type':'InteractionParticlesRollout',
+                    'embedding': 8}
 
-    model_config = {'ntry': 502,
-                    'datum': '2309012_490',
-                    'trackmate_metric' : {'Label': 0,
-                    'Spot_ID': 1,
-                    'Track_ID': 2,
-                    'Quality': 3,
-                    'X': 4,
-                    'Y': 5,
-                    'Z': 6,
-                    'T': 7,
-                    'Frame': 8,
-                    'R': 9,
-                    'Visibility': 10,
-                    'Spot color': 11,
-                    'Mean Ch1': 12,
-                    'Median Ch1': 13,
-                    'Min Ch1': 14,
-                    'Max Ch1': 15,
-                    'Sum Ch1': 16,
-                    'Std Ch1': 17,
-                    'Ctrst Ch1': 18,
-                    'SNR Ch1': 19,
-                    'El. x0': 20,
-                    'El. y0': 21,
-                    'El. long axis': 22,
-                    'El. sh. axis': 23,
-                    'El. angle': 24,
-                    'El. a.r.': 25,
-                    'Area': 26,
-                    'Perim.': 27,
-                    'Circ.': 28,
-                    'Solidity': 29,
-                    'Shape index': 30},
-                    'metric_list' : ['Frame', 'Track_ID', 'X', 'Y', 'Mean Ch1', 'Area'],
-                    'file_folder' : '/home/allierc@hhmi.org/Desktop/signaling/HGF-ERK signaling/fig 1/B_E/210105/trackmate/',
-                    'dx':0.908,
-                    'dt':5.0,
-                    'h': 0,
-                    'msg': 1,
-                    'aggr': 0,
-                    'rot_mode':1,
-                    'embedding': 128,
-                    'cell_embedding': 1,
-                    'time_embedding': False,
-                    'n_mp_layers': 5,
-                    'hidden_size': 32,
-                    'bNoise': False,
-                    'noise_level': 0,
-                    'batch_size': 8,
-                    'bRollout': False,
-                    'rollout_window': 2,
-                    'frame_start': 20,
-                    'frame_end': [241],
-                    'n_tracks': 0,
-                    'radius': 0.15,
-                    'output_angle': False,
-                    'remove_update_U': True,
-                    'train_MLPs': True,
-                    'net_type':'ResNetGNN'}
-
-    model_config = {'ntry': 503,
-                    'datum': '2309012_490',
-                    'trackmate_metric' : {'Label': 0,
-                    'Spot_ID': 1,
-                    'Track_ID': 2,
-                    'Quality': 3,
-                    'X': 4,
-                    'Y': 5,
-                    'Z': 6,
-                    'T': 7,
-                    'Frame': 8,
-                    'R': 9,
-                    'Visibility': 10,
-                    'Spot color': 11,
-                    'Mean Ch1': 12,
-                    'Median Ch1': 13,
-                    'Min Ch1': 14,
-                    'Max Ch1': 15,
-                    'Sum Ch1': 16,
-                    'Std Ch1': 17,
-                    'Ctrst Ch1': 18,
-                    'SNR Ch1': 19,
-                    'El. x0': 20,
-                    'El. y0': 21,
-                    'El. long axis': 22,
-                    'El. sh. axis': 23,
-                    'El. angle': 24,
-                    'El. a.r.': 25,
-                    'Area': 26,
-                    'Perim.': 27,
-                    'Circ.': 28,
-                    'Solidity': 29,
-                    'Shape index': 30},
-                    'metric_list' : ['Frame', 'Track_ID', 'X', 'Y', 'Mean Ch1', 'Area'],
-                    'file_folder' : '/home/allierc@hhmi.org/Desktop/signaling/HGF-ERK signaling/fig 1/B_E/210105/trackmate/',
-                    'dx':0.908,
-                    'dt':5.0,
-                    'h': 0,
-                    'msg': 1,
-                    'aggr': 0,
-                    'rot_mode':1,
-                    'embedding': 128,
-                    'cell_embedding': 1,
-                    'time_embedding': False,
-                    'n_mp_layers': 5,
-                    'hidden_size': 32,
-                    'bNoise': False,
-                    'noise_level': 0,
-                    'batch_size': 8,
-                    'bRollout': False,
-                    'rollout_window': 2,
-                    'frame_start': 20,
-                    'frame_end': [241],
-                    'n_tracks': 0,
-                    'radius': 0.15,
-                    'output_angle': False,
-                    'remove_update_U': True,
-                    'train_MLPs': True,
-                    'cell_embedding': 3,
-                    'net_type':'ResNetGNN'}
-
-    model_config = {'ntry': 504,
-                    'datum': '2309012_490',
-                    'trackmate_metric' : {'Label': 0,
-                    'Spot_ID': 1,
-                    'Track_ID': 2,
-                    'Quality': 3,
-                    'X': 4,
-                    'Y': 5,
-                    'Z': 6,
-                    'T': 7,
-                    'Frame': 8,
-                    'R': 9,
-                    'Visibility': 10,
-                    'Spot color': 11,
-                    'Mean Ch1': 12,
-                    'Median Ch1': 13,
-                    'Min Ch1': 14,
-                    'Max Ch1': 15,
-                    'Sum Ch1': 16,
-                    'Std Ch1': 17,
-                    'Ctrst Ch1': 18,
-                    'SNR Ch1': 19,
-                    'El. x0': 20,
-                    'El. y0': 21,
-                    'El. long axis': 22,
-                    'El. sh. axis': 23,
-                    'El. angle': 24,
-                    'El. a.r.': 25,
-                    'Area': 26,
-                    'Perim.': 27,
-                    'Circ.': 28,
-                    'Solidity': 29,
-                    'Shape index': 30},
-                    'metric_list' : ['Frame', 'Track_ID', 'X', 'Y', 'Mean Ch1', 'Area'],
-                    'file_folder' : '/home/allierc@hhmi.org/Desktop/signaling/HGF-ERK signaling/fig 1/B_E/210105/trackmate/',
-                    'dx':0.908,
-                    'dt':5.0,
-                    'h': 0,
-                    'msg': 1,
-                    'aggr': 0,
-                    'rot_mode':1,
-                    'embedding': 128,
-                    'cell_embedding': 1,
-                    'time_embedding': False,
-                    'n_mp_layers': 5,
-                    'hidden_size': 32,
-                    'bNoise': False,
-                    'noise_level': 0,
-                    'batch_size': 8,
-                    'bRollout': False,
-                    'rollout_window': 2,
-                    'frame_start': 20,
-                    'frame_end': [241],
-                    'n_tracks': 0,
-                    'radius': 0.15,
-                    'output_angle': False,
-                    'remove_update_U': True,
-                    'train_MLPs': True,
-                    'cell_embedding': 8,
-                    'net_type':'ResNetGNN'}
+    # model_config = {'ntry': 502,
+    #                 'datum': '2309012_490',
+    #                 'trackmate_metric' : {'Label': 0,
+    #                 'Spot_ID': 1,
+    #                 'Track_ID': 2,
+    #                 'Quality': 3,
+    #                 'X': 4,
+    #                 'Y': 5,
+    #                 'Z': 6,
+    #                 'T': 7,
+    #                 'Frame': 8,
+    #                 'R': 9,
+    #                 'Visibility': 10,
+    #                 'Spot color': 11,
+    #                 'Mean Ch1': 12,
+    #                 'Median Ch1': 13,
+    #                 'Min Ch1': 14,
+    #                 'Max Ch1': 15,
+    #                 'Sum Ch1': 16,
+    #                 'Std Ch1': 17,
+    #                 'Ctrst Ch1': 18,
+    #                 'SNR Ch1': 19,
+    #                 'El. x0': 20,
+    #                 'El. y0': 21,
+    #                 'El. long axis': 22,
+    #                 'El. sh. axis': 23,
+    #                 'El. angle': 24,
+    #                 'El. a.r.': 25,
+    #                 'Area': 26,
+    #                 'Perim.': 27,
+    #                 'Circ.': 28,
+    #                 'Solidity': 29,
+    #                 'Shape index': 30},
+    #                 'metric_list' : ['Frame', 'Track_ID', 'X', 'Y', 'Mean Ch1', 'Area'],
+    #                 'file_folder' : '/home/allierc@hhmi.org/Desktop/signaling/HGF-ERK signaling/fig 1/B_E/210105/trackmate/',
+    #                 'dx':0.908,
+    #                 'dt':5.0,
+    #                 'h': 0,
+    #                 'msg': 1,
+    #                 'aggr': 0,
+    #                 'rot_mode':1,
+    #                 'embedding': 128,
+    #                 'cell_embedding': 1,
+    #                 'time_embedding': False,
+    #                 'n_mp_layers': 5,
+    #                 'hidden_size': 32,
+    #                 'bNoise': False,
+    #                 'noise_level': 0,
+    #                 'batch_size': 8,
+    #                 'bRollout': False,
+    #                 'rollout_window': 2,
+    #                 'frame_start': 20,
+    #                 'frame_end': [241],
+    #                 'n_tracks': 0,
+    #                 'radius': 0.15,
+    #                 'output_angle': False,
+    #                 'remove_update_U': True,
+    #                 'train_MLPs': True,
+    #                 'net_type':'ResNetGNN'}
+    #
+    # model_config = {'ntry': 503,
+    #                 'datum': '2309012_490',
+    #                 'trackmate_metric' : {'Label': 0,
+    #                 'Spot_ID': 1,
+    #                 'Track_ID': 2,
+    #                 'Quality': 3,
+    #                 'X': 4,
+    #                 'Y': 5,
+    #                 'Z': 6,
+    #                 'T': 7,
+    #                 'Frame': 8,
+    #                 'R': 9,
+    #                 'Visibility': 10,
+    #                 'Spot color': 11,
+    #                 'Mean Ch1': 12,
+    #                 'Median Ch1': 13,
+    #                 'Min Ch1': 14,
+    #                 'Max Ch1': 15,
+    #                 'Sum Ch1': 16,
+    #                 'Std Ch1': 17,
+    #                 'Ctrst Ch1': 18,
+    #                 'SNR Ch1': 19,
+    #                 'El. x0': 20,
+    #                 'El. y0': 21,
+    #                 'El. long axis': 22,
+    #                 'El. sh. axis': 23,
+    #                 'El. angle': 24,
+    #                 'El. a.r.': 25,
+    #                 'Area': 26,
+    #                 'Perim.': 27,
+    #                 'Circ.': 28,
+    #                 'Solidity': 29,
+    #                 'Shape index': 30},
+    #                 'metric_list' : ['Frame', 'Track_ID', 'X', 'Y', 'Mean Ch1', 'Area'],
+    #                 'file_folder' : '/home/allierc@hhmi.org/Desktop/signaling/HGF-ERK signaling/fig 1/B_E/210105/trackmate/',
+    #                 'dx':0.908,
+    #                 'dt':5.0,
+    #                 'h': 0,
+    #                 'msg': 1,
+    #                 'aggr': 0,
+    #                 'rot_mode':1,
+    #                 'embedding': 128,
+    #                 'cell_embedding': 1,
+    #                 'time_embedding': False,
+    #                 'n_mp_layers': 5,
+    #                 'hidden_size': 32,
+    #                 'bNoise': False,
+    #                 'noise_level': 0,
+    #                 'batch_size': 8,
+    #                 'bRollout': False,
+    #                 'rollout_window': 2,
+    #                 'frame_start': 20,
+    #                 'frame_end': [241],
+    #                 'n_tracks': 0,
+    #                 'radius': 0.15,
+    #                 'output_angle': False,
+    #                 'remove_update_U': True,
+    #                 'train_MLPs': True,
+    #                 'cell_embedding': 3,
+    #                 'net_type':'ResNetGNN'}
+    #
+    # model_config = {'ntry': 504,
+    #                 'datum': '2309012_490',
+    #                 'trackmate_metric' : {'Label': 0,
+    #                 'Spot_ID': 1,
+    #                 'Track_ID': 2,
+    #                 'Quality': 3,
+    #                 'X': 4,
+    #                 'Y': 5,
+    #                 'Z': 6,
+    #                 'T': 7,
+    #                 'Frame': 8,
+    #                 'R': 9,
+    #                 'Visibility': 10,
+    #                 'Spot color': 11,
+    #                 'Mean Ch1': 12,
+    #                 'Median Ch1': 13,
+    #                 'Min Ch1': 14,
+    #                 'Max Ch1': 15,
+    #                 'Sum Ch1': 16,
+    #                 'Std Ch1': 17,
+    #                 'Ctrst Ch1': 18,
+    #                 'SNR Ch1': 19,
+    #                 'El. x0': 20,
+    #                 'El. y0': 21,
+    #                 'El. long axis': 22,
+    #                 'El. sh. axis': 23,
+    #                 'El. angle': 24,
+    #                 'El. a.r.': 25,
+    #                 'Area': 26,
+    #                 'Perim.': 27,
+    #                 'Circ.': 28,
+    #                 'Solidity': 29,
+    #                 'Shape index': 30},
+    #                 'metric_list' : ['Frame', 'Track_ID', 'X', 'Y', 'Mean Ch1', 'Area'],
+    #                 'file_folder' : '/home/allierc@hhmi.org/Desktop/signaling/HGF-ERK signaling/fig 1/B_E/210105/trackmate/',
+    #                 'dx':0.908,
+    #                 'dt':5.0,
+    #                 'h': 0,
+    #                 'msg': 1,
+    #                 'aggr': 0,
+    #                 'rot_mode':1,
+    #                 'embedding': 128,
+    #                 'cell_embedding': 1,
+    #                 'time_embedding': False,
+    #                 'n_mp_layers': 5,
+    #                 'hidden_size': 32,
+    #                 'bNoise': False,
+    #                 'noise_level': 0,
+    #                 'batch_size': 8,
+    #                 'bRollout': False,
+    #                 'rollout_window': 2,
+    #                 'frame_start': 20,
+    #                 'frame_end': [241],
+    #                 'n_tracks': 0,
+    #                 'radius': 0.15,
+    #                 'output_angle': False,
+    #                 'remove_update_U': True,
+    #                 'train_MLPs': True,
+    #                 'cell_embedding': 8,
+    #                 'net_type':'ResNetGNN'}
+    #
 
     model_config = {'ntry': 505,
                     'datum': '2309012_490',
@@ -1738,7 +1736,7 @@ if __name__ == "__main__":
 
     trackmate, nstd, nmean = load_trackmate(model_config, folder)
 
-    train_model(model_config, trackmate)
+    # train_model(model_config, trackmate)
     test_model(bVisu=True, bMinimization=False, net_type=net_type)
 
 
