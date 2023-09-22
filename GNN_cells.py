@@ -23,15 +23,23 @@ from scipy.ndimage import gaussian_filter
 import torch_geometric.transforms as T
 import time
 from sklearn.linear_model import LinearRegression
+from sklearn.preprocessing import StandardScaler
 from shapely.geometry import MultiPoint, Point, Polygon
+import seaborn as sns
+import pandas as pd
+import umap
 
-def load_trackmate(model_config, folder):
+def load_trackmate(model_config):
 
-    print('Loading trackmate file ...')
-    trackmate = np.load(f'{folder}/transformed_spots.npy')
+
+    folder = model_config['dataset'][0]
+
+    print(f'Loading trackmate file {folder} ...')
+    dt = model_config['dt']
+    trackmate = np.load(f'./graphs_data/graphs_cells_{folder}/transformed_spots.npy')
     trackmate[-1, 0] = -1
-    nstd = np.load(f'{folder}/nstd.npy')
-    nmean = np.load(f'{folder}/nmean.npy')
+    nstd = np.load(f'./graphs_data/graphs_cells_{folder}/nstd.npy')
+    nmean = np.load(f'./graphs_data/graphs_cells_{folder}/nmean.npy')
     c0 = nstd[4] / nstd[2] * dt
     c1 = nstd[6] / nstd[4]
     print('done ...')
@@ -71,7 +79,45 @@ def load_trackmate(model_config, folder):
     print(f'degree {np.round(nmean[16], 2)}+/-{np.round(nstd[16], 2)}')
     print('')
 
-    return trackmate, nstd, nmean
+    trackmate_list = []
+    trackmate_list.append(trackmate)
+    n_tracks_list = []
+    n_tracks_list.append(n_tracks)
+
+    if len(model_config['dataset']) > 0:
+
+        print ('Multiple data training ... ')
+
+        for n in range (1,len(model_config['dataset'])):
+
+            folder = model_config['dataset'][n]
+            print(f'Loading trackmate file {folder} ...')
+            trackmate = np.load(f'./graphs_data/graphs_cells_{folder}/transformed_spots.npy')
+            trackmate[-1, 0] = -1
+            trackmate_list.append(trackmate)
+            n_tracks_list.append(np.max(trackmate[:, 1]))
+
+            print('Trackmate quality check...')
+
+            time.sleep(0.5)
+
+            for k in tqdm(range(1, trackmate.shape[0] - 1)):
+                if trackmate[k - 1, 1] == trackmate[k + 1, 1]:
+
+                    if np.abs(trackmate[k + 1, 4] * c0 - (trackmate[k + 1, 2] - trackmate[k, 2])) > 1E-3:
+                        print(f'Pb check vx at row {k}')
+                    if np.abs(trackmate[k + 1, 5] * c0 - (trackmate[k + 1, 3] - trackmate[k, 3])) > 1E-3:
+                        print(f'Pb check vy at row {k}')
+
+                    if np.abs(trackmate[k + 1, 6] * c1 - (trackmate[k + 1, 4] - trackmate[k, 4])) > 1E-3:
+                        print(f'Pb check accx at row {k}')
+                    if np.abs(trackmate[k + 1, 7] * c1 - (trackmate[k + 1, 5] - trackmate[k, 5])) > 1E-3:
+                        print(f'Pb check accy at row {k}')
+
+            time.sleep(0.5)
+
+
+    return trackmate_list, nstd, nmean, n_tracks_list
 
 def voronoi_finite_polygons_2d(vor, radius=0.05):
     """
@@ -198,7 +244,6 @@ class InteractionParticlesRollout(pyg.nn.MessagePassing):
         self.h = model_config['h']
         self.msg=model_config['msg']
         self.aggr=model_config['aggr']
-        self.embedding = model_config['embedding']
         self.cell_embedding = model_config['cell_embedding']
         self.nlayers = model_config['n_mp_layers']
         self.hidden_size = model_config['hidden_size']
@@ -208,21 +253,21 @@ class InteractionParticlesRollout(pyg.nn.MessagePassing):
         self.frame_end = model_config['frame_end']
 
         if (self.msg == 0) | (self.msg == 4) :
-            self.lin_edge = MLP(input_size=1 + self.embedding, hidden_size=self.hidden_size, output_size=1, layers=self.nlayers, device=self.device)
+            self.lin_edge = MLP(input_size=1 + self.cell_embedding, hidden_size=self.hidden_size, output_size=1, layers=self.nlayers, device=self.device)
         elif (self.msg == 2) :
-            self.lin_edge = MLP(input_size=4 + self.embedding, hidden_size=self.hidden_size, output_size=1, layers=self.nlayers, device=self.device)
+            self.lin_edge = MLP(input_size=4 + self.cell_embedding, hidden_size=self.hidden_size, output_size=1, layers=self.nlayers, device=self.device)
         elif (self.msg == 3):
-            self.lin_edge = MLP(input_size=4 + self.embedding, hidden_size=self.hidden_size, output_size=1, layers=self.nlayers, device=self.device)
+            self.lin_edge = MLP(input_size=4 + self.cell_embedding, hidden_size=self.hidden_size, output_size=1, layers=self.nlayers, device=self.device)
         else: #(self.msg==1):
-            self.lin_edge = MLP(input_size=5 + self.embedding, hidden_size=self.hidden_size, output_size=1, layers=self.nlayers, device=self.device)
+            self.lin_edge = MLP(input_size=5 + self.cell_embedding, hidden_size=self.hidden_size, output_size=1, layers=self.nlayers, device=self.device)
 
-        self.lin_update = MLP(input_size=1, hidden_size=16, output_size=1, layers=2, device=self.device)
+        if self.h > 1:
+            self.lin_update = MLP(input_size=self.h, hidden_size=16, output_size=1, layers=2, device=self.device)
+        else:
+            self.lin_update = MLP(input_size=1, hidden_size=16, output_size=1, layers=2, device=self.device)
 
-        self.a = nn.Parameter(torch.tensor(np.ones((3,int(self.n_tracks+1), self.embedding)), requires_grad=False, device=self.device))
-        self.t = nn.Parameter(torch.tensor(np.ones((3,241, 1)), requires_grad=True, device=self.device))
-        # self.a = nn.Parameter(torch.tensor(np.ones((int(self.n_tracks), 3)), requires_grad=False, device=self.device))
-        # self.t = nn.Parameter(torch.tensor(np.ones((241, 1)), device='cuda:0', requires_grad=True))
-
+        self.a = nn.Parameter(torch.tensor(np.ones((3,int(self.n_tracks+1), self.cell_embedding)), requires_grad=True, device=self.device))
+        self.t = nn.Parameter(torch.tensor(np.ones((3,int(self.n_tracks+1), 1)), requires_grad=False, device=self.device))
         self.b = nn.Parameter(torch.tensor(np.ones((3,int(self.n_tracks+1),3)), device=self.device, requires_grad=True))
 
     def forward(self, data, data_id):
@@ -245,8 +290,12 @@ class InteractionParticlesRollout(pyg.nn.MessagePassing):
 
         if self.h == 0 :
             pred = self.lin_update(message[:,0:1]) - coeff[:,0:1]*(x[:,8:9]-coeff[:,1:2])
-        elif self.h==1:
+        if self.h == 1:
             pred = self.lin_update(message[:,0:1])
+        if self.h == 2:
+            pred = self.lin_update(torch.cat((x[:, 8:9], message[:, 0:1]), dim=-1))
+        if self.h == 3:
+            pred = self.lin_update(torch.cat((x[:, 8:9], x[:, 10:11], message[:, 0:1]), dim=-1))
 
         return message, pred
 
@@ -287,42 +336,29 @@ class InteractionParticlesRollout(pyg.nn.MessagePassing):
             vy_p = -(vxj - vxi) * sin_j + (vyj - vyi) * cos_j
 
         cell_id=x_i[:, 1].detach().cpu().numpy()
-        coeff = self.a[self.data_id,cell_id] * self.t[self.data_id,self.frame]
+        coeff = self.a[self.data_id,cell_id]
+
         #coeff = self.a[cell_id] * self.t[self.frame]
 
         d = torch.clamp(edge_attr,min=0.01)
 
-        if self.embedding == 0:
+        if self.msg==0:
+            return diff_erk*0
+        elif self.msg==1:
+            in_features = torch.cat((x_jp, y_jp, vx_p/d, vy_p/d, diff_erk), dim=-1)
+        elif self.msg==2:
+            in_features = torch.cat((x_jp, y_jp, vx_p/d, vy_p/d), dim=-1)
+        elif self.msg==3:
+            in_features = torch.cat((x_jp, y_jp, vx_p, vy_p), dim=-1)
+        elif self.msg==4:
+            in_features = diff_erk * coeff[:, 2:3]
+        else: # self.msg==4:
+            in_features = diff_erk*0
 
-            if self.msg==0:
-                return diff_erk*0
-            elif self.msg==1:
-                in_features = torch.cat((x_jp * coeff[:, 0:1], y_jp * coeff[:, 0:1], vx_p/d * coeff[:, 1:2], vy_p/d * coeff[:, 1:2], diff_erk * coeff[:, 2:3]), dim=-1)
-            elif self.msg==2:
-                in_features = torch.cat((x_jp * coeff[:, 0:1], y_jp * coeff[:, 0:1], vx_p/d* coeff[:, 1:2], vy_p/d* coeff[:, 1:2]), dim=-1)
-            elif self.msg==3:
-                in_features = torch.cat((x_jp * coeff[:, 0:1], y_jp * coeff[:, 0:1], vx_p* coeff[:, 1:2], vy_p* coeff[:, 1:2]), dim=-1)
-            elif self.msg==4:
-                in_features = diff_erk * coeff[:, 2:3]
-            else: # self.msg==4:
-                in_features = diff_erk*0
-            out = self.lin_edge(in_features)
-
-        else:
-            if self.msg==0:
-                return diff_erk*0
-            elif self.msg==1:
-                in_features = torch.cat((x_jp, y_jp, vx_p/d, vy_p/d, diff_erk), dim=-1)
-            elif self.msg==2:
-                in_features = torch.cat((x_jp, y_jp, vx_p/d, vy_p/d), dim=-1)
-            elif self.msg==3:
-                in_features = torch.cat((x_jp, y_jp, vx_p, vy_p), dim=-1)
-            elif self.msg==4:
-                in_features = diff_erk * coeff[:, 2:3]
-            else: # self.msg==4:
-                in_features = diff_erk*0
-
+        if self.cell_embedding > 0:
             out = self.lin_edge(torch.cat((in_features, coeff), dim=-1))
+        else:
+            out = self.lin_edge(in_features)
 
         return out
 
@@ -330,7 +366,8 @@ class InteractionParticlesRollout(pyg.nn.MessagePassing):
     def update(self, aggr_out):
 
         return aggr_out     #self.lin_node(aggr_out)
-def train_model_Interaction_rollout(model_config=None, trackmate=None):
+
+def train_model_Interaction_rollout(model_config=None, trackmate_list=None, nstd=None, nmean=None, n_tracks_list=None):
 
     ntry = model_config['ntry']
     bRollout = model_config['bRollout']
@@ -355,12 +392,7 @@ def train_model_Interaction_rollout(model_config=None, trackmate=None):
         print('msg: MLP(diff_erk)')
     else:  # model_config['msg']==4:
         print('msg: 0')
-    if model_config['cell_embedding'] == 0:
-        print('embedding: a false t false')
-    elif model_config['cell_embedding'] == 1:
-        print('embedding: a true t false')
-    else:  # model_config['cell_embedding'] == 2:
-        print('embedding: a true t true')
+
     print('')
 
     l_dir = os.path.join('.', 'log')
@@ -375,18 +407,8 @@ def train_model_Interaction_rollout(model_config=None, trackmate=None):
     model.nstd = nstd
     model.nmean = nmean
 
-    state_dict = torch.load(f"./log/try_{ntry}/models/best_model_new.pt")
-    model.load_state_dict(state_dict['model_state_dict'])
-
-    if model_config['cell_embedding'] == 0:
-        model.a.requires_grad = False
-        model.t.requires_grad = False
-    if model_config['cell_embedding'] == 1:
-        model.a.requires_grad = True
-        model.t.requires_grad = False
-    if model_config['cell_embedding'] == 2:
-        model.a.requires_grad = True
-        model.t.requires_grad = True
+    # state_dict = torch.load(f"./log/try_{ntry}/models/best_model_new.pt")
+    # model.load_state_dict(state_dict['model_state_dict'])
 
     table = PrettyTable(["Modules", "Parameters"])
     total_params = 0
@@ -404,15 +426,14 @@ def train_model_Interaction_rollout(model_config=None, trackmate=None):
     model.train()
 
     print('Training model = InteractionParticles() ...')
+    print(' ')
 
-    # ff = 0
-    # trackmate = trackmate_list[ff].copy()
-    # trackmate_true = trackmate_list[ff].copy()
-
-    trackmate_true = []
-    trackmate_true = trackmate.copy()
+    data_id = 0
+    trackmate = trackmate_list[data_id].copy()
+    trackmate_true = trackmate_list[data_id].copy()
 
     best_loss = np.inf
+
 
     for epoch in range(5000):
 
@@ -421,49 +442,53 @@ def train_model_Interaction_rollout(model_config=None, trackmate=None):
 
         mserr_list = []
 
-        trackmate = trackmate_true.copy()
+        for data_id in range(len(model_config['dataset'])):
 
-        for frame in range(20, 240):  # frame_list:
+            trackmate = trackmate_list[data_id].copy()
+            trackmate_true = trackmate_list[data_id].copy()
 
-            model.frame = int(frame)
-            pos = np.argwhere(trackmate[:, 0] == frame)
+            for frame in range(20, model_config['frame_end'][data_id]):  # frame_list:
 
-            list_all = pos[:, 0].astype(int)
-            mask = torch.tensor(np.ones(list_all.shape[0]), device=device)
-            for k in range(len(mask)):
-                if trackmate[list_all[k] - 1, 1] != trackmate[list_all[k] + 1, 1]:
-                    mask[k] = 0
-            mask = mask[:, None]
+                model.frame = int(frame)
+                pos = np.argwhere(trackmate[:, 0] == frame)
 
-            x = torch.tensor(trackmate[list_all, 0:17], device=device)
-            target = torch.tensor(trackmate_true[list_all + 1, 8:9], device=device)
+                list_all = pos[:, 0].astype(int)
+                mask = torch.tensor(np.ones(list_all.shape[0]), device=device)
+                for k in range(len(mask)):
+                    if trackmate[list_all[k] - 1, 1] != trackmate[list_all[k] + 1, 1]:
+                        mask[k] = 0
+                mask = mask[:, None]
 
-            dataset = data.Data(x=x, pos=x[:, 2:4])
-            transform = T.Compose([T.Delaunay(), T.FaceToEdge(), T.Distance(norm=False)])
-            dataset = transform(dataset)
-            distance = dataset.edge_attr.detach().cpu().numpy()
-            pos = np.argwhere(distance < model_config['radius'])
-            edges = dataset.edge_index
-            dataset = data.Data(x=x, edge_index=edges[:, pos[:, 0]],
-                                edge_attr=torch.tensor(distance[pos[:, 0]], device=device))
+                x = torch.tensor(trackmate[list_all, 0:17], device=device)
+                target = torch.tensor(trackmate_true[list_all + 1, 8:9], device=device)
 
-            optimizer.zero_grad()
-            message, pred = model(data=dataset, data_id=0)
+                dataset = data.Data(x=x, pos=x[:, 2:4])
+                transform = T.Compose([T.Delaunay(), T.FaceToEdge(), T.Distance(norm=False)])
+                dataset = transform(dataset)
+                distance = dataset.edge_attr.detach().cpu().numpy()
+                pos = np.argwhere(distance < model_config['radius'])
+                edges = dataset.edge_index
+                dataset = data.Data(x=x, edge_index=edges[:, pos[:, 0]],
+                                    edge_attr=torch.tensor(distance[pos[:, 0]], device=device))
 
-            loss = criteria((pred[:, :] + x[:, 8:9]) * mask, target * mask) * 3
+                optimizer.zero_grad()
+                message, pred = model(data=dataset, data_id=data_id)
 
-            loss.backward()
-            optimizer.step()
-            mserr_list.append(loss.item())
+                loss = criteria((pred[:, :] + x[:, 8:9]) * mask, target * mask) * 3
 
-            trackmate[list_all + 1, 10:11] = np.array(pred.detach().cpu())
-            trackmate[list_all + 1, 8:9] = trackmate[list_all, 8:9] + trackmate[list_all + 1, 10:11]
+                loss.backward()
+                optimizer.step()
+                mserr_list.append(loss.item())
 
-        print(f"Epoch: {epoch} Loss: {np.round(np.mean(mserr_list), 4)}")
+                trackmate[list_all + 1, 10:11] = np.array(pred.detach().cpu())
+                trackmate[list_all + 1, 8:9] = trackmate[list_all, 8:9] + trackmate[list_all + 1, 10:11]
 
-        if (np.mean(mserr_list) < best_loss):
-            best_loss = np.mean(mserr_list)
-            torch.save({'model_state_dict': model.state_dict(), 'optimizer_state_dict': optimizer.state_dict()}, os.path.join(log_dir, 'models', 'best_model_new.pt'))
+            print(f"data_id: {data_id} Epoch: {epoch} Loss: {np.round(np.mean(mserr_list), 4)}")
+
+            if (np.mean(mserr_list) < best_loss) & (data_id==0)  :
+                print('Save model')
+                best_loss = np.mean(mserr_list)
+                torch.save({'model_state_dict': model.state_dict(), 'optimizer_state_dict': optimizer.state_dict()}, os.path.join(log_dir, 'models', 'best_model_new.pt'))
 
     print(' end of training')
     print(' ')
@@ -762,8 +787,9 @@ class ResNetGNN(torch.nn.Module):
 
         return pred
 
-def train_model_ResNet(model_config=None, trackmate=None):
+def train_model_ResNet(model_config=None, trackmate_list=None, nstd=None, nmean=None, n_tracks_list=None):
 
+    ntry = model_config['ntry']
     print('ntry: ', model_config['ntry'])
     if model_config['h'] == 0:
         print('no GRUcell ')
@@ -879,17 +905,14 @@ def train_model_ResNet(model_config=None, trackmate=None):
     model.train()
 
     print('Training model = ResNetGNN() ...')
+    print(' ')
 
-    # ff = 0
-    # print(file_list[ff])
-    # trackmate = trackmate_list[ff].copy()
-    # trackmate_true = trackmate_list[ff].copy()
-
-    trackmate_true = []
-    trackmate_true = trackmate.copy()
-
+    data_id = 0
+    trackmate = trackmate_list[data_id].copy()
+    trackmate_true = trackmate_list[data_id].copy()
 
     best_loss = np.inf
+
 
     for epoch in range(1000):
 
@@ -898,66 +921,107 @@ def train_model_ResNet(model_config=None, trackmate=None):
 
         mserr_list = []
 
-        trackmate = trackmate_true.copy()
+        for data_id in range(len(model_config['dataset'])):
+            trackmate = trackmate_list[data_id].copy()
+            trackmate_true = trackmate_list[data_id].copy()
 
-        for frame in range(20, 200):  # frame_list:
+            for frame in range(20, model_config['frame_end'][data_id]):  # frame_list:
 
-            pos = np.argwhere(trackmate[:, 0] == frame)
+                pos = np.argwhere(trackmate[:, 0] == frame)
 
-            list_all = pos[:, 0].astype(int)
-            mask = torch.tensor(np.ones(list_all.shape[0]), device=device)
-            for k in range(len(mask)):
-                if trackmate[list_all[k] - 1, 1] != trackmate[list_all[k] + 1, 1]:
-                    mask[k] = 0
-                if (trackmate[list_all[k], 2] < -0.45) | (trackmate[list_all[k], 3] < -0.52) | (
-                        trackmate[list_all[k], 3] > 0.55):
-                    mask[k] = 0
-            mask = mask[:, None]
+                list_all = pos[:, 0].astype(int)
+                mask = torch.tensor(np.ones(list_all.shape[0]), device=device)
+                for k in range(len(mask)):
+                    if trackmate[list_all[k] - 1, 1] != trackmate[list_all[k] + 1, 1]:
+                        mask[k] = 0
+                    if (trackmate[list_all[k], 2] < -0.45) | (trackmate[list_all[k], 3] < -0.52) | (
+                            trackmate[list_all[k], 3] > 0.55):
+                        mask[k] = 0
+                mask = mask[:, None]
 
-            x = torch.tensor(trackmate[list_all, 0:17], device=device)
-            target = torch.tensor(trackmate_true[list_all + 1, 8:9], device=device)
+                x = torch.tensor(trackmate[list_all, 0:17], device=device)
+                target = torch.tensor(trackmate_true[list_all + 1, 8:9], device=device)
 
-            dataset = data.Data(x=x, pos=x[:, 2:4])
-            transform = T.Compose([T.Delaunay(), T.FaceToEdge(), T.Distance(norm=False)])
-            dataset = transform(dataset)
-            distance = dataset.edge_attr.detach().cpu().numpy()
-            pos = np.argwhere(distance < model_config['radius'])
-            edges = dataset.edge_index
-            dataset = data.Data(x=x, edge_index=edges[:, pos[:, 0]],
-                                edge_attr=torch.tensor(distance[pos[:, 0]], device=device))
+                dataset = data.Data(x=x, pos=x[:, 2:4])
+                transform = T.Compose([T.Delaunay(), T.FaceToEdge(), T.Distance(norm=False)])
+                dataset = transform(dataset)
+                distance = dataset.edge_attr.detach().cpu().numpy()
+                pos = np.argwhere(distance < model_config['radius'])
+                edges = dataset.edge_index
+                dataset = data.Data(x=x, edge_index=edges[:, pos[:, 0]],
+                                    edge_attr=torch.tensor(distance[pos[:, 0]], device=device))
 
-            optimizer.zero_grad()
-            pred = model(data=dataset, data_id=0)
+                optimizer.zero_grad()
+                pred = model(data=dataset, data_id=data_id)
 
-            loss = criteria((pred[:, :] + x[:, 8:9]) * mask, target * mask) * 3
+                loss = criteria((pred[:, :] + x[:, 8:9]) * mask, target * mask) * 3
 
-            loss.backward()
-            optimizer.step()
-            mserr_list.append(loss.item())
+                loss.backward()
+                optimizer.step()
+                mserr_list.append(loss.item())
 
-            trackmate[list_all + 1, 10:11] = np.array(pred.detach().cpu())
-            trackmate[list_all + 1, 8:9] = trackmate[list_all, 8:9] + trackmate[list_all + 1, 10:11]
+                trackmate[list_all + 1, 10:11] = np.array(pred.detach().cpu())
+                trackmate[list_all + 1, 8:9] = trackmate[list_all, 8:9] + trackmate[list_all + 1, 10:11]
 
-        print(f"Epoch: {epoch} Loss: {np.round(np.mean(mserr_list), 4)}")
+            print(f"data_id: {data_id} Epoch: {epoch} Loss: {np.round(np.mean(mserr_list), 4)}")
 
-        if (np.mean(mserr_list) < best_loss):
-            best_loss = np.mean(mserr_list)
-            torch.save({'model_state_dict': model.state_dict(), 'optimizer_state_dict': optimizer.state_dict()},
-                       os.path.join(log_dir, 'models', 'best_model_new.pt'))
-def train_model(model_config=None, trackmate=None):
+            if (np.mean(mserr_list) < best_loss) & (data_id==0)  :
+                best_loss = np.mean(mserr_list)
+                torch.save({'model_state_dict': model.state_dict(), 'optimizer_state_dict': optimizer.state_dict()},
+                           os.path.join(log_dir, 'models', 'best_model_new.pt'))
 
+def train_model(model_config=None, trackmate_list=None, nstd=None, nmean=None, n_tracks_list=None):
+
+    print('')
+    ntry = model_config['ntry']
+    print(f'ntry: {ntry}')
+    dataset = model_config['dataset']
+    print(f'dataset: {dataset}')
+    file_folder = model_config['file_folder']
+    print(f'file_folder: {file_folder}')
+    dx = model_config['dx']
+    print(f'dx: {dx} microns')
+    dt = model_config['dt']
+    print(f'dt: {dt} minutes')
+    metric_list = model_config['metric_list']
+    print(f'metric_list: {metric_list}')
+    frame_end = model_config['frame_end']
+    print(f'frame_end: {frame_end}')
     net_type = model_config['net_type']
+    print(f'net_type: {net_type}')
+
     if net_type == 'ResNetGNN':
-        train_model_ResNet(model_config, trackmate)
+        train_model_ResNet(model_config, trackmate_list, nstd, nmean, n_tracks_list)
     else:
-        train_model_Interaction_rollout(model_config, trackmate)
-def test_model(bVisu=False, bMinimization=False, net_type='InteractionParticlesRollout'):
+        train_model_Interaction_rollout(model_config, trackmate_list, nstd, nmean, n_tracks_list)
+
+
+def test_model(trackmate_list=None, bVisu=False, bMinimization=False, net_type='InteractionParticlesRollout'):
+
+    print('')
+    ntry = model_config['ntry']
+    print(f'ntry: {ntry}')
+    dataset = model_config['dataset']
+    print(f'dataset: {dataset}')
+    file_folder = model_config['file_folder']
+    print(f'file_folder: {file_folder}')
+    dx = model_config['dx']
+    print(f'dx: {dx} microns')
+    dt = model_config['dt']
+    print(f'dt: {dt} minutes')
+    metric_list = model_config['metric_list']
+    print(f'metric_list: {metric_list}')
+    frame_end = model_config['frame_end']
+    print(f'frame_end: {frame_end}')
+    net_type = model_config['net_type']
+    print(f'net_type: {net_type}')
 
 
     model_lin = LinearRegression()
 
     ntry = model_config['ntry']
     bRollout = model_config['bRollout']
+
 
     if net_type == 'InteractionParticlesRollout':
 
@@ -1040,6 +1104,33 @@ def test_model(bVisu=False, bMinimization=False, net_type='InteractionParticlesR
     print(table)
     print(f"Total Trainable Params: {total_params}")
 
+    print('UMAP embedding...')
+
+    reducer = umap.UMAP()
+
+    pos = torch.argwhere(torch.sum(model.a[0,:, :],axis=1) != 8)
+    pos = pos[:, 0].detach().cpu().numpy()
+    coeff_norm = model.a[0,pos.astype(int)].data.detach().cpu().numpy()
+
+    # coeff_df = pd.DataFrame(coeff, columns=['Column_A', 'Column_B', 'Column_C','Column_D','Column_E', 'Column_F', 'Column_G','Column_H'])
+    # sns.pairplot(coeff_df)
+    # plt.show()
+
+    trans = umap.UMAP(n_neighbors=10, n_components=2, random_state=42, transform_queue_size=0).fit(coeff_norm)
+    # v = trans.transform(coeff_norm)
+    # print(v[10])
+    # print(trans.transform(coeff_norm[10:11, :]))
+
+    print(f' UMAP done ...')
+    # plt.ion()
+    # plt.scatter(
+    #     v[:, 0],
+    #     v[:, 1], s=10, color='k')
+    # plt.gca().set_aspect('equal', 'datalim')
+    # plt.title('UMAP', fontsize=18);
+    # plt.show()
+
+
     criteria = nn.MSELoss()
     model.eval()
 
@@ -1057,11 +1148,15 @@ def test_model(bVisu=False, bMinimization=False, net_type='InteractionParticlesR
     R2narea = []
     R2speed = []
 
+    data_id = 0
+    trackmate = trackmate_list[data_id].copy()
+    trackmate_true = trackmate_list[data_id].copy()
+
     message_track = np.zeros((trackmate.shape[0], 2))
     I = imread(f'{file_folder}/../ACTIVITY.tif')
     I = np.array(I)
 
-    trackmate_true = trackmate.copy()
+
 
     for frame in tqdm(range(20, 240)):  # frame_list:
 
@@ -1073,7 +1168,7 @@ def test_model(bVisu=False, bMinimization=False, net_type='InteractionParticlesR
         for k in range(len(mask)):
             if trackmate[list_all[k] - 1, 1] != trackmate[list_all[k] + 1, 1]:
                 mask[k] = 0
-            if torch.sum(model.a[0, trackmate[list_all[k], 1].astype(int), :]) == 3:
+            if torch.sum(model.a[0, trackmate[list_all[k], 1].astype(int), :]) == model_config['cell_embedding']:
                 mask[k] = 0
             if (trackmate[list_all[k], 2] < -0.45) | (trackmate[list_all[k], 3] < -0.5) | (trackmate[list_all[k], 3] > 0.52):
                mask[k] = 0
@@ -1130,8 +1225,23 @@ def test_model(bVisu=False, bMinimization=False, net_type='InteractionParticlesR
 
             # print(f'{frame} {np.round(loss.item(), 3)}  {np.round(model_lin.score(xx, yy), 3)} mask {np.round(torch.sum(mask).item() / mask.shape[0], 3)}')
 
-            fig = plt.figure(figsize=(32, 18))
+            fig = plt.figure(figsize=(30, 18))
             # plt.ion()
+
+            ax = fig.add_subplot(3, 5, 9)
+            v = trans.transform(coeff_norm)
+            plt.scatter(v[:, 0],v[:, 1], s=1, color=[0.75,0.75,0.75])
+            # plt.gca().set_aspect('equal', 'datalim')
+            pos = torch.argwhere(mask==1)
+            pos = pos[:,0].detach().cpu().numpy()
+            current_coeff = model.a[0,trackmate_true[list_all[pos.astype(int)], 1],:].detach().cpu().numpy()
+            v = trans.transform(current_coeff)
+            plt.scatter(v[:, 0],v[:, 1], s=5, color='k')
+            plt.xlabel('UMAP-0 [a.u]', fontsize=12)
+            plt.ylabel('UMAP-1 [a.u]', fontsize=12)
+            plt.xlim([0, 12])
+            plt.ylim([0, 10])
+
 
             ax = fig.add_subplot(3, 5, 1)
             plt.scatter(trackmate_true[list_all + 1, 2], trackmate_true[list_all + 1, 3], s=125, marker='.',
@@ -1141,8 +1251,11 @@ def test_model(bVisu=False, bMinimization=False, net_type='InteractionParticlesR
             plt.text(-0.6, 0.7, 'True ERK', fontsize=12)
 
             ax = fig.add_subplot(3, 5, 10)
-            plt.scatter(trackmate_true[list_all + 1, 2], trackmate_true[list_all + 1, 3], s=50, marker='.',
-                        c=mask.detach().cpu().numpy()+1)
+            plt.scatter(trackmate_true[list_all[pos.astype(int)] + 1, 2], trackmate_true[list_all[pos.astype(int)] + 1, 3], s=25, marker='.',color=[0.75,0.75,0.75])
+            pos = torch.argwhere(mask==0)
+            pos = pos[:,0].detach().cpu().numpy()
+            plt.scatter(trackmate_true[list_all[pos.astype(int)] + 1, 2],
+                        trackmate_true[list_all[pos.astype(int)] + 1, 3], s=25, marker='.', color='k')
             plt.xlim([-0.6, 0.95])
             plt.ylim([-0.6, 0.6])
 
@@ -1175,7 +1288,7 @@ def test_model(bVisu=False, bMinimization=False, net_type='InteractionParticlesR
             plt.xlim([-0.6, 0.95])
             plt.ylim([-0.6, 0.6])
 
-            ax = fig.add_subplot(3, 5, 4)
+            ax = fig.add_subplot(3, 5, 5)
             model_lin = LinearRegression()
 
             plt.plot(np.arange(20, 20 + len(R2model)), np.array(R2model), 'k', label='Model')
@@ -1198,7 +1311,7 @@ def test_model(bVisu=False, bMinimization=False, net_type='InteractionParticlesR
             plt.plot(np.arange(20, 20 + len(R2speed)), np.array(R2speed), 'c', label='Cell velocity')
             plt.legend(loc='upper left', fontsize=12)
 
-            ax = fig.add_subplot(3, 5, 5)
+            ax = fig.add_subplot(3, 5, 4)
             pos = torch.argwhere(mask==1)
             pos = pos[:,0].detach().cpu().numpy()
             plt.scatter(trackmate_true[list_all[pos.astype(int)] + 1, 8:9], trackmate[list_all[pos.astype(int)] + 1, 8:9], s=1, c='k')
@@ -1213,13 +1326,13 @@ def test_model(bVisu=False, bMinimization=False, net_type='InteractionParticlesR
             plt.xlabel('True ERk [a.u]', fontsize=12)
             plt.ylabel('Model Erk [a.u]', fontsize=12)
 
-            if net_type == 'InteractionParticlesRollout':
-                ax = fig.add_subplot(3, 5, 11)
-                plt.scatter(trackmate[list_all + 1, 2], trackmate[list_all + 1, 3], s=125, marker='.',
-                            c=message[:, 0], vmin=-1, vmax=1)
-                plt.xlim([-0.6, 0.95])
-                plt.ylim([-0.6, 0.6])
-                plt.text(-0.6, 0.65, 'Message amplitude [a.u.]', fontsize=12)
+            # if net_type == 'InteractionParticlesRollout':
+            #     ax = fig.add_subplot(3, 5, 11)
+            #     plt.scatter(trackmate[list_all + 1, 2], trackmate[list_all + 1, 3], s=125, marker='.',
+            #                 c=message[:, 0], vmin=-1, vmax=1)
+            #     plt.xlim([-0.6, 0.95])
+            #     plt.ylim([-0.6, 0.6])
+            #     plt.text(-0.6, 0.65, 'Message amplitude [a.u.]', fontsize=12)
 
             ax = fig.add_subplot(3, 5, 6)
             xx0 = x.detach().cpu() * nstd[2]
@@ -1288,25 +1401,25 @@ def test_model(bVisu=False, bMinimization=False, net_type='InteractionParticlesR
             plt.legend(loc='upper right')
             plt.xlabel('Frame [a.u]', fontsize=12)
 
-            ax = fig.add_subplot(3, 5, 12)
-            pos = np.argwhere(trackmate[:, 1] == 100)
-            ppos = np.argwhere((trackmate[pos, 0] < frame + 1) & (trackmate[pos, 0] > 19))
-            plt.plot(trackmate[pos[ppos, 0], 0], trackmate[pos[ppos, 0], 11], 'y',
-                     label='Norm. Area')
-            plt.plot(trackmate[pos[ppos, 0], 0], trackmate[pos[ppos, 0], 12], 'g',
-                     label='Norm. Perimeter')
-            plt.plot(trackmate[pos[ppos, 0], 0],
-                     np.sqrt(trackmate[pos[ppos, 0], 4] ** 2 + trackmate[pos[ppos, 0], 7] ** 2), 'm',
-                     label='Norm. velocity')
-            plt.ylim([-1, 1])
-            plt.xlim([0, 240])
-            plt.xlabel('Frame [a.u]', fontsize=12)
-            plt.legend()
-            handles, labels = ax.get_legend_handles_labels()
-            unique = [(h, l) for i, (h, l) in enumerate(zip(handles, labels)) if l not in labels[:i]]
-            ax.legend(*zip(*unique))
+            # ax = fig.add_subplot(3, 5, 12)
+            # pos = np.argwhere(trackmate[:, 1] == 100)
+            # ppos = np.argwhere((trackmate[pos, 0] < frame + 1) & (trackmate[pos, 0] > 19))
+            # plt.plot(trackmate[pos[ppos, 0], 0], trackmate[pos[ppos, 0], 12], 'y',
+            #          label='Norm. Area')
+            # plt.plot(trackmate[pos[ppos, 0], 0], trackmate[pos[ppos, 0], 13], 'g',
+            #          label='Norm. Perimeter')
+            # plt.plot(trackmate[pos[ppos, 0], 0],
+            #          np.sqrt(trackmate[pos[ppos, 0], 4] ** 2 + trackmate[pos[ppos, 0], 5] ** 2), 'm',
+            #          label='Norm. velocity')
+            # plt.ylim([-1, 1])
+            # plt.xlim([0, 240])
+            # plt.xlabel('Frame [a.u]', fontsize=12)
+            # plt.legend()
+            # handles, labels = ax.get_legend_handles_labels()
+            # unique = [(h, l) for i, (h, l) in enumerate(zip(handles, labels)) if l not in labels[:i]]
+            # ax.legend(*zip(*unique))
 
-            ax = fig.add_subplot(3, 5, 8)
+            ax = fig.add_subplot(3, 5, 11)
             pos = np.argwhere(trackmate[list_all, 1] == 200)
             if len(pos) > 0:
                 c2x = xx0[pos[0], 0]
@@ -1363,7 +1476,7 @@ def test_model(bVisu=False, bMinimization=False, net_type='InteractionParticlesR
                                   head_width=2,
                                   alpha=0.5, length_includes_head=True)
 
-            ax = fig.add_subplot(3, 5, 9)
+            ax = fig.add_subplot(3, 5, 12)
             plt.plot(np.arange(20, 20 + len(true_ERK2)), np.array(true_ERK2) * nstd[8] + nmean[8], 'g',
                      label='True ERK')
             plt.plot(np.arange(20, 20 + len(model_ERK2)), np.array(model_ERK2) * nstd[8] + nmean[8], 'k',
@@ -1373,23 +1486,25 @@ def test_model(bVisu=False, bMinimization=False, net_type='InteractionParticlesR
             plt.legend(loc='upper right')
             plt.xlabel('Frame [a.u]', fontsize=12)
 
-            ax = fig.add_subplot(3, 5, 14)
-            pos = np.argwhere(trackmate[:, 1] == 200)
-            ppos = np.argwhere((trackmate[pos, 0] < frame + 1) & (trackmate[pos, 0] > 19))
-            plt.plot(trackmate[pos[ppos, 0], 0], trackmate[pos[ppos, 0], 11], 'y',
-                     label='Norm. Area')
-            plt.plot(trackmate[pos[ppos, 0], 0], trackmate[pos[ppos, 0], 12], 'g',
-                     label='Norm. Perimeter')
-            plt.plot(trackmate[pos[ppos, 0], 0],
-                     np.sqrt(trackmate[pos[ppos, 0], 6] ** 2 + trackmate[pos[ppos, 0], 7] ** 2), 'm',
-                     label='Norm. velocity')
-            plt.ylim([-1, 1])
-            plt.xlim([0, 240])
-            plt.xlabel('Frame [a.u]', fontsize=12)
-            plt.legend()
-            handles, labels = ax.get_legend_handles_labels()
-            unique = [(h, l) for i, (h, l) in enumerate(zip(handles, labels)) if l not in labels[:i]]
-            ax.legend(*zip(*unique))
+
+
+            # ax = fig.add_subplot(3, 5, 14)
+            # pos = np.argwhere(trackmate[:, 1] == 200)
+            # ppos = np.argwhere((trackmate[pos, 0] < frame + 1) & (trackmate[pos, 0] > 19))
+            # plt.plot(trackmate[pos[ppos, 0], 0], trackmate[pos[ppos, 0], 12], 'y',
+            #          label='Norm. Area')
+            # plt.plot(trackmate[pos[ppos, 0], 0], trackmate[pos[ppos, 0], 13], 'g',
+            #          label='Norm. Perimeter')
+            # plt.plot(trackmate[pos[ppos, 0], 0],
+            #          np.sqrt(trackmate[pos[ppos, 0], 4] ** 2 + trackmate[pos[ppos, 5], 7] ** 2), 'm',
+            #          label='Norm. velocity')
+            # plt.ylim([-1, 1])
+            # plt.xlim([0, 240])
+            # plt.xlabel('Frame [a.u]', fontsize=12)
+            # plt.legend()
+            # handles, labels = ax.get_legend_handles_labels()
+            # unique = [(h, l) for i, (h, l) in enumerate(zip(handles, labels)) if l not in labels[:i]]
+            # ax.legend(*zip(*unique))
 
             # plt.show()
 
@@ -1407,69 +1522,69 @@ if __name__ == "__main__":
 
     print(f'Device :{device}')
 
-    model_config = {'ntry': 501,
-                    'datum': '2309012_490',
-                    'trackmate_metric' : {'Label': 0,
-                    'Spot_ID': 1,
-                    'Track_ID': 2,
-                    'Quality': 3,
-                    'X': 4,
-                    'Y': 5,
-                    'Z': 6,
-                    'T': 7,
-                    'Frame': 8,
-                    'R': 9,
-                    'Visibility': 10,
-                    'Spot color': 11,
-                    'Mean Ch1': 12,
-                    'Median Ch1': 13,
-                    'Min Ch1': 14,
-                    'Max Ch1': 15,
-                    'Sum Ch1': 16,
-                    'Std Ch1': 17,
-                    'Ctrst Ch1': 18,
-                    'SNR Ch1': 19,
-                    'El. x0': 20,
-                    'El. y0': 21,
-                    'El. long axis': 22,
-                    'El. sh. axis': 23,
-                    'El. angle': 24,
-                    'El. a.r.': 25,
-                    'Area': 26,
-                    'Perim.': 27,
-                    'Circ.': 28,
-                    'Solidity': 29,
-                    'Shape index': 30},
-                    'metric_list' : ['Frame', 'Track_ID', 'X', 'Y', 'Mean Ch1', 'Area'],
-                    'file_folder' : '/home/allierc@hhmi.org/Desktop/signaling/HGF-ERK signaling/fig 1/B_E/210105/trackmate/',
-                    'dx':0.908,
-                    'dt':5.0,
-                    'h': 0,
-                    'msg': 1,
-                    'aggr': 0,
-                    'rot_mode':1,
-                    'embedding': 8,
-                    'cell_embedding': 1,
-                    'time_embedding': False,
-                    'n_mp_layers': 5,
-                    'hidden_size': 128,
-                    'bNoise': False,
-                    'noise_level': 0,
-                    'batch_size': 4,
-                    'bRollout': False,
-                    'rollout_window': 2,
-                    'frame_start': 20,
-                    'frame_end': [241],
-                    'n_tracks': 0,
-                    'radius': 0.15,
-                    'output_angle': False,
-                    'remove_update_U': True,
-                    'train_MLPs': True,
-                    'net_type':'InteractionParticlesRollout',
-                    'embedding': 8}
+    # model_config = {'ntry': 501,
+    #                 'dataset': '2309012_490',
+    #                 'trackmate_metric' : {'Label': 0,
+    #                 'Spot_ID': 1,
+    #                 'Track_ID': 2,
+    #                 'Quality': 3,
+    #                 'X': 4,
+    #                 'Y': 5,
+    #                 'Z': 6,
+    #                 'T': 7,
+    #                 'Frame': 8,
+    #                 'R': 9,
+    #                 'Visibility': 10,
+    #                 'Spot color': 11,
+    #                 'Mean Ch1': 12,
+    #                 'Median Ch1': 13,
+    #                 'Min Ch1': 14,
+    #                 'Max Ch1': 15,
+    #                 'Sum Ch1': 16,
+    #                 'Std Ch1': 17,
+    #                 'Ctrst Ch1': 18,
+    #                 'SNR Ch1': 19,
+    #                 'El. x0': 20,
+    #                 'El. y0': 21,
+    #                 'El. long axis': 22,
+    #                 'El. sh. axis': 23,
+    #                 'El. angle': 24,
+    #                 'El. a.r.': 25,
+    #                 'Area': 26,
+    #                 'Perim.': 27,
+    #                 'Circ.': 28,
+    #                 'Solidity': 29,
+    #                 'Shape index': 30},
+    #                 'metric_list' : ['Frame', 'Track_ID', 'X', 'Y', 'Mean Ch1', 'Area'],
+    #                 'file_folder' : '/home/allierc@hhmi.org/Desktop/signaling/HGF-ERK signaling/fig 1/B_E/210105/trackmate/',
+    #                 'dx':0.908,
+    #                 'dt':5.0,
+    #                 'h': 0,
+    #                 'msg': 1,
+    #                 'aggr': 0,
+    #                 'rot_mode':1,
+    #                 'embedding': 8,
+    #                 'cell_embedding': 1,
+    #                 'time_embedding': False,
+    #                 'n_mp_layers': 5,
+    #                 'hidden_size': 128,
+    #                 'bNoise': False,
+    #                 'noise_level': 0,
+    #                 'batch_size': 4,
+    #                 'bRollout': False,
+    #                 'rollout_window': 2,
+    #                 'frame_start': 20,
+    #                 'frame_end': [200,228,228], # [241,228,228],
+    #                 'n_tracks': 0,
+    #                 'radius': 0.15,
+    #                 'output_angle': False,
+    #                 'remove_update_U': True,
+    #                 'train_MLPs': True,
+    #                 'net_type':'InteractionParticlesRollout',
+    #                 'embedding': 8}
 
     # model_config = {'ntry': 502,
-    #                 'datum': '2309012_490',
+    #                 'dataset': '2309012_490',
     #                 'trackmate_metric' : {'Label': 0,
     #                 'Spot_ID': 1,
     #                 'Track_ID': 2,
@@ -1529,7 +1644,7 @@ if __name__ == "__main__":
     #                 'net_type':'ResNetGNN'}
     #
     # model_config = {'ntry': 503,
-    #                 'datum': '2309012_490',
+    #                 'dataset': '2309012_490',
     #                 'trackmate_metric' : {'Label': 0,
     #                 'Spot_ID': 1,
     #                 'Track_ID': 2,
@@ -1589,70 +1704,9 @@ if __name__ == "__main__":
     #                 'cell_embedding': 3,
     #                 'net_type':'ResNetGNN'}
     #
-    # model_config = {'ntry': 504,
-    #                 'datum': '2309012_490',
-    #                 'trackmate_metric' : {'Label': 0,
-    #                 'Spot_ID': 1,
-    #                 'Track_ID': 2,
-    #                 'Quality': 3,
-    #                 'X': 4,
-    #                 'Y': 5,
-    #                 'Z': 6,
-    #                 'T': 7,
-    #                 'Frame': 8,
-    #                 'R': 9,
-    #                 'Visibility': 10,
-    #                 'Spot color': 11,
-    #                 'Mean Ch1': 12,
-    #                 'Median Ch1': 13,
-    #                 'Min Ch1': 14,
-    #                 'Max Ch1': 15,
-    #                 'Sum Ch1': 16,
-    #                 'Std Ch1': 17,
-    #                 'Ctrst Ch1': 18,
-    #                 'SNR Ch1': 19,
-    #                 'El. x0': 20,
-    #                 'El. y0': 21,
-    #                 'El. long axis': 22,
-    #                 'El. sh. axis': 23,
-    #                 'El. angle': 24,
-    #                 'El. a.r.': 25,
-    #                 'Area': 26,
-    #                 'Perim.': 27,
-    #                 'Circ.': 28,
-    #                 'Solidity': 29,
-    #                 'Shape index': 30},
-    #                 'metric_list' : ['Frame', 'Track_ID', 'X', 'Y', 'Mean Ch1', 'Area'],
-    #                 'file_folder' : '/home/allierc@hhmi.org/Desktop/signaling/HGF-ERK signaling/fig 1/B_E/210105/trackmate/',
-    #                 'dx':0.908,
-    #                 'dt':5.0,
-    #                 'h': 0,
-    #                 'msg': 1,
-    #                 'aggr': 0,
-    #                 'rot_mode':1,
-    #                 'embedding': 128,
-    #                 'cell_embedding': 1,
-    #                 'time_embedding': False,
-    #                 'n_mp_layers': 5,
-    #                 'hidden_size': 32,
-    #                 'bNoise': False,
-    #                 'noise_level': 0,
-    #                 'batch_size': 8,
-    #                 'bRollout': False,
-    #                 'rollout_window': 2,
-    #                 'frame_start': 20,
-    #                 'frame_end': [241],
-    #                 'n_tracks': 0,
-    #                 'radius': 0.15,
-    #                 'output_angle': False,
-    #                 'remove_update_U': True,
-    #                 'train_MLPs': True,
-    #                 'cell_embedding': 8,
-    #                 'net_type':'ResNetGNN'}
-    #
 
     model_config = {'ntry': 505,
-                    'datum': '2309012_490',
+                    'dataset': ['2309012_490'],
                     'trackmate_metric' : {'Label': 0,
                     'Spot_ID': 1,
                     'Track_ID': 2,
@@ -1692,8 +1746,6 @@ if __name__ == "__main__":
                     'msg': 1,
                     'aggr': 0,
                     'rot_mode':1,
-                    'embedding': 8,
-                    'cell_embedding': 1,
                     'time_embedding': False,
                     'n_mp_layers': 5,
                     'hidden_size': 128,
@@ -1703,41 +1755,400 @@ if __name__ == "__main__":
                     'bRollout': False,
                     'rollout_window': 2,
                     'frame_start': 20,
-                    'frame_end': [241],
+                    'frame_end': [200], # [241,228,228],
                     'n_tracks': 0,
                     'radius': 0.15,
                     'output_angle': False,
                     'remove_update_U': True,
                     'train_MLPs': True,
+                    'cell_embedding': 3,
                     'net_type':'InteractionParticlesRollout'}
 
+    trackmate_list, nstd, nmean, n_tracks_list = load_trackmate(model_config)
+    train_model(model_config, trackmate_list, nstd, nmean, n_tracks_list)
+    test_model(trackmate_list=trackmate_list, bVisu=True, bMinimization=False, net_type=model_config['net_type'])
+
+    model_config = {'ntry': 506,
+                    'dataset': ['2309012_490', '2309012_491', '2309012_492'],
+                    'trackmate_metric' : {'Label': 0,
+                    'Spot_ID': 1,
+                    'Track_ID': 2,
+                    'Quality': 3,
+                    'X': 4,
+                    'Y': 5,
+                    'Z': 6,
+                    'T': 7,
+                    'Frame': 8,
+                    'R': 9,
+                    'Visibility': 10,
+                    'Spot color': 11,
+                    'Mean Ch1': 12,
+                    'Median Ch1': 13,
+                    'Min Ch1': 14,
+                    'Max Ch1': 15,
+                    'Sum Ch1': 16,
+                    'Std Ch1': 17,
+                    'Ctrst Ch1': 18,
+                    'SNR Ch1': 19,
+                    'El. x0': 20,
+                    'El. y0': 21,
+                    'El. long axis': 22,
+                    'El. sh. axis': 23,
+                    'El. angle': 24,
+                    'El. a.r.': 25,
+                    'Area': 26,
+                    'Perim.': 27,
+                    'Circ.': 28,
+                    'Solidity': 29,
+                    'Shape index': 30},
+                    'metric_list' : ['Frame', 'Track_ID', 'X', 'Y', 'Mean Ch1', 'Area'],
+                    'file_folder' : '/home/allierc@hhmi.org/Desktop/signaling/HGF-ERK signaling/fig 1/B_E/210105/trackmate/',
+                    'dx':0.908,
+                    'dt':5.0,
+                    'h': 0,
+                    'msg': 1,
+                    'aggr': 0,
+                    'rot_mode':1,
+                    'time_embedding': False,
+                    'n_mp_layers': 5,
+                    'hidden_size': 128,
+                    'bNoise': False,
+                    'noise_level': 0,
+                    'batch_size': 4,
+                    'bRollout': False,
+                    'rollout_window': 2,
+                    'frame_start': 20,
+                    'frame_end': [200,182,182], # [241,228,228],
+                    'n_tracks': 0,
+                    'radius': 0.15,
+                    'output_angle': False,
+                    'remove_update_U': True,
+                    'train_MLPs': True,
+                    'cell_embedding': 3,
+                    'net_type':'InteractionParticlesRollout'}
+
+    trackmate_list, nstd, nmean, n_tracks_list = load_trackmate(model_config)
+    train_model(model_config, trackmate_list, nstd, nmean, n_tracks_list)
+    test_model(trackmate_list=trackmate_list, bVisu=True, bMinimization=False, net_type=model_config['net_type'])
+
+    model_config = {'ntry': 507,
+                    'dataset': ['2309012_490'],
+                    'trackmate_metric' : {'Label': 0,
+                    'Spot_ID': 1,
+                    'Track_ID': 2,
+                    'Quality': 3,
+                    'X': 4,
+                    'Y': 5,
+                    'Z': 6,
+                    'T': 7,
+                    'Frame': 8,
+                    'R': 9,
+                    'Visibility': 10,
+                    'Spot color': 11,
+                    'Mean Ch1': 12,
+                    'Median Ch1': 13,
+                    'Min Ch1': 14,
+                    'Max Ch1': 15,
+                    'Sum Ch1': 16,
+                    'Std Ch1': 17,
+                    'Ctrst Ch1': 18,
+                    'SNR Ch1': 19,
+                    'El. x0': 20,
+                    'El. y0': 21,
+                    'El. long axis': 22,
+                    'El. sh. axis': 23,
+                    'El. angle': 24,
+                    'El. a.r.': 25,
+                    'Area': 26,
+                    'Perim.': 27,
+                    'Circ.': 28,
+                    'Solidity': 29,
+                    'Shape index': 30},
+                    'metric_list' : ['Frame', 'Track_ID', 'X', 'Y', 'Mean Ch1', 'Area'],
+                    'file_folder' : '/home/allierc@hhmi.org/Desktop/signaling/HGF-ERK signaling/fig 1/B_E/210105/trackmate/',
+                    'dx':0.908,
+                    'dt':5.0,
+                    'h': 0,
+                    'msg': 1,
+                    'aggr': 0,
+                    'rot_mode':1,
+                    'time_embedding': False,
+                    'n_mp_layers': 5,
+                    'hidden_size': 128,
+                    'bNoise': False,
+                    'noise_level': 0,
+                    'batch_size': 4,
+                    'bRollout': False,
+                    'rollout_window': 2,
+                    'frame_start': 20,
+                    'frame_end': [200], # [241,228,228],
+                    'n_tracks': 0,
+                    'radius': 0.15,
+                    'output_angle': False,
+                    'remove_update_U': True,
+                    'train_MLPs': True,
+                    'cell_embedding': 8,
+                    'net_type':'InteractionParticlesRollout'}
+
+    trackmate_list, nstd, nmean, n_tracks_list = load_trackmate(model_config)
+    train_model(model_config, trackmate_list, nstd, nmean, n_tracks_list)
+    test_model(trackmate_list=trackmate_list, bVisu=True, bMinimization=False, net_type=model_config['net_type'])
+
+    model_config = {'ntry': 508,
+                    'dataset': ['2309012_490'],
+                    'trackmate_metric' : {'Label': 0,
+                    'Spot_ID': 1,
+                    'Track_ID': 2,
+                    'Quality': 3,
+                    'X': 4,
+                    'Y': 5,
+                    'Z': 6,
+                    'T': 7,
+                    'Frame': 8,
+                    'R': 9,
+                    'Visibility': 10,
+                    'Spot color': 11,
+                    'Mean Ch1': 12,
+                    'Median Ch1': 13,
+                    'Min Ch1': 14,
+                    'Max Ch1': 15,
+                    'Sum Ch1': 16,
+                    'Std Ch1': 17,
+                    'Ctrst Ch1': 18,
+                    'SNR Ch1': 19,
+                    'El. x0': 20,
+                    'El. y0': 21,
+                    'El. long axis': 22,
+                    'El. sh. axis': 23,
+                    'El. angle': 24,
+                    'El. a.r.': 25,
+                    'Area': 26,
+                    'Perim.': 27,
+                    'Circ.': 28,
+                    'Solidity': 29,
+                    'Shape index': 30},
+                    'metric_list' : ['Frame', 'Track_ID', 'X', 'Y', 'Mean Ch1', 'Area'],
+                    'file_folder' : '/home/allierc@hhmi.org/Desktop/signaling/HGF-ERK signaling/fig 1/B_E/210105/trackmate/',
+                    'dx':0.908,
+                    'dt':5.0,
+                    'h': 2,
+                    'msg': 1,
+                    'aggr': 0,
+                    'rot_mode':1,
+                    'time_embedding': False,
+                    'n_mp_layers': 5,
+                    'hidden_size': 128,
+                    'bNoise': False,
+                    'noise_level': 0,
+                    'batch_size': 4,
+                    'bRollout': False,
+                    'rollout_window': 2,
+                    'frame_start': 20,
+                    'frame_end': [200], # [241,228,228],
+                    'n_tracks': 0,
+                    'radius': 0.15,
+                    'output_angle': False,
+                    'remove_update_U': True,
+                    'train_MLPs': True,
+                    'cell_embedding': 3,
+                    'net_type':'InteractionParticlesRollout'}
+
+    trackmate_list, nstd, nmean, n_tracks_list = load_trackmate(model_config)
+    train_model(model_config, trackmate_list, nstd, nmean, n_tracks_list)
+    test_model(trackmate_list=trackmate_list, bVisu=True, bMinimization=False, net_type=model_config['net_type'])
+
+    model_config = {'ntry': 509,
+                    'dataset': ['2309012_490'],
+                    'trackmate_metric' : {'Label': 0,
+                    'Spot_ID': 1,
+                    'Track_ID': 2,
+                    'Quality': 3,
+                    'X': 4,
+                    'Y': 5,
+                    'Z': 6,
+                    'T': 7,
+                    'Frame': 8,
+                    'R': 9,
+                    'Visibility': 10,
+                    'Spot color': 11,
+                    'Mean Ch1': 12,
+                    'Median Ch1': 13,
+                    'Min Ch1': 14,
+                    'Max Ch1': 15,
+                    'Sum Ch1': 16,
+                    'Std Ch1': 17,
+                    'Ctrst Ch1': 18,
+                    'SNR Ch1': 19,
+                    'El. x0': 20,
+                    'El. y0': 21,
+                    'El. long axis': 22,
+                    'El. sh. axis': 23,
+                    'El. angle': 24,
+                    'El. a.r.': 25,
+                    'Area': 26,
+                    'Perim.': 27,
+                    'Circ.': 28,
+                    'Solidity': 29,
+                    'Shape index': 30},
+                    'metric_list' : ['Frame', 'Track_ID', 'X', 'Y', 'Mean Ch1', 'Area'],
+                    'file_folder' : '/home/allierc@hhmi.org/Desktop/signaling/HGF-ERK signaling/fig 1/B_E/210105/trackmate/',
+                    'dx':0.908,
+                    'dt':5.0,
+                    'h': 3,
+                    'msg': 1,
+                    'aggr': 0,
+                    'rot_mode':1,
+                    'time_embedding': False,
+                    'n_mp_layers': 5,
+                    'hidden_size': 128,
+                    'bNoise': False,
+                    'noise_level': 0,
+                    'batch_size': 4,
+                    'bRollout': False,
+                    'rollout_window': 2,
+                    'frame_start': 20,
+                    'frame_end': [200], # [241,228,228],
+                    'n_tracks': 0,
+                    'radius': 0.15,
+                    'output_angle': False,
+                    'remove_update_U': True,
+                    'train_MLPs': True,
+                    'cell_embedding': 3,
+                    'net_type':'InteractionParticlesRollout'}
+
+    trackmate_list, nstd, nmean, n_tracks_list = load_trackmate(model_config)
+    train_model(model_config, trackmate_list, nstd, nmean, n_tracks_list)
+    test_model(trackmate_list=trackmate_list, bVisu=True, bMinimization=False, net_type=model_config['net_type'])
+
+    model_config = {'ntry': 510,
+                    'dataset': '2309012_490',
+                    'trackmate_metric': {'Label': 0,
+                                         'Spot_ID': 1,
+                                         'Track_ID': 2,
+                                         'Quality': 3,
+                                         'X': 4,
+                                         'Y': 5,
+                                         'Z': 6,
+                                         'T': 7,
+                                         'Frame': 8,
+                                         'R': 9,
+                                         'Visibility': 10,
+                                         'Spot color': 11,
+                                         'Mean Ch1': 12,
+                                         'Median Ch1': 13,
+                                         'Min Ch1': 14,
+                                         'Max Ch1': 15,
+                                         'Sum Ch1': 16,
+                                         'Std Ch1': 17,
+                                         'Ctrst Ch1': 18,
+                                         'SNR Ch1': 19,
+                                         'El. x0': 20,
+                                         'El. y0': 21,
+                                         'El. long axis': 22,
+                                         'El. sh. axis': 23,
+                                         'El. angle': 24,
+                                         'El. a.r.': 25,
+                                         'Area': 26,
+                                         'Perim.': 27,
+                                         'Circ.': 28,
+                                         'Solidity': 29,
+                                         'Shape index': 30},
+                    'metric_list': ['Frame', 'Track_ID', 'X', 'Y', 'Mean Ch1', 'Area'],
+                    'file_folder': '/home/allierc@hhmi.org/Desktop/signaling/HGF-ERK signaling/fig 1/B_E/210105/trackmate/',
+                    'dx': 0.908,
+                    'dt': 5.0,
+                    'h': 0,
+                    'msg': 1,
+                    'aggr': 0,
+                    'rot_mode': 1,
+                    'embedding': 128,
+                    'time_embedding': False,
+                    'n_mp_layers': 5,
+                    'hidden_size': 32,
+                    'bNoise': False,
+                    'noise_level': 0,
+                    'batch_size': 8,
+                    'bRollout': False,
+                    'rollout_window': 2,
+                    'frame_start': 20,
+                    'frame_end': [200], # [241,228,228],
+                    'n_tracks': 0,
+                    'radius': 0.15,
+                    'output_angle': False,
+                    'remove_update_U': True,
+                    'train_MLPs': True,
+                    'cell_embedding': 3,
+                    'net_type': 'ResNetGNN'}
+
+    trackmate_list, nstd, nmean, n_tracks_list = load_trackmate(model_config)
+    train_model(model_config, trackmate_list, nstd, nmean, n_tracks_list)
+    test_model(trackmate_list=trackmate_list, bVisu=True, bMinimization=False, net_type=model_config['net_type'])
+
+    model_config = {'ntry': 511,
+                    'dataset': ['2309012_490', '2309012_491', '2309012_492'],
+                    'trackmate_metric': {'Label': 0,
+                                         'Spot_ID': 1,
+                                         'Track_ID': 2,
+                                         'Quality': 3,
+                                         'X': 4,
+                                         'Y': 5,
+                                         'Z': 6,
+                                         'T': 7,
+                                         'Frame': 8,
+                                         'R': 9,
+                                         'Visibility': 10,
+                                         'Spot color': 11,
+                                         'Mean Ch1': 12,
+                                         'Median Ch1': 13,
+                                         'Min Ch1': 14,
+                                         'Max Ch1': 15,
+                                         'Sum Ch1': 16,
+                                         'Std Ch1': 17,
+                                         'Ctrst Ch1': 18,
+                                         'SNR Ch1': 19,
+                                         'El. x0': 20,
+                                         'El. y0': 21,
+                                         'El. long axis': 22,
+                                         'El. sh. axis': 23,
+                                         'El. angle': 24,
+                                         'El. a.r.': 25,
+                                         'Area': 26,
+                                         'Perim.': 27,
+                                         'Circ.': 28,
+                                         'Solidity': 29,
+                                         'Shape index': 30},
+                    'metric_list': ['Frame', 'Track_ID', 'X', 'Y', 'Mean Ch1', 'Area'],
+                    'file_folder': '/home/allierc@hhmi.org/Desktop/signaling/HGF-ERK signaling/fig 1/B_E/210105/trackmate/',
+                    'dx': 0.908,
+                    'dt': 5.0,
+                    'h': 0,
+                    'msg': 1,
+                    'aggr': 0,
+                    'rot_mode': 1,
+                    'embedding': 128,
+                    'time_embedding': False,
+                    'n_mp_layers': 5,
+                    'hidden_size': 32,
+                    'bNoise': False,
+                    'noise_level': 0,
+                    'batch_size': 8,
+                    'bRollout': False,
+                    'rollout_window': 2,
+                    'frame_start': 20,
+                    'frame_end': [200,182,182], # [241,228,228],
+                    'n_tracks': 0,
+                    'radius': 0.15,
+                    'output_angle': False,
+                    'remove_update_U': True,
+                    'train_MLPs': True,
+                    'cell_embedding': 3,
+                    'net_type': 'ResNetGNN'}
+
+    trackmate_list, nstd, nmean, n_tracks_list = load_trackmate(model_config)
+    train_model(model_config, trackmate_list, nstd, nmean, n_tracks_list)
+    test_model(trackmate_list=trackmate_list, bVisu=True, bMinimization=False, net_type=model_config['net_type'])
 
 
-    trackmate_metric = model_config['trackmate_metric']
-    print('')
-    ntry = model_config['ntry']
-    print(f'ntry: {ntry}')
-    datum = model_config['datum']
-    print(f'datum: {datum}')
-    file_folder = model_config['file_folder']
-    print(f'file_folder: {file_folder}')
-    dx = model_config['dx']
-    print(f'dx: {dx} microns')
-    dt = model_config['dt']
-    print(f'dt: {dt} minutes')
-    metric_list = model_config['metric_list']
-    print(f'metric_list: {metric_list}')
-    frame_end = model_config['frame_end']
-    print(f'frame_end: {frame_end}')
-    net_type = model_config['net_type']
-    print(f'net_type: {net_type}')
-
-    folder = f'./graphs_data/graphs_cells_{datum}/'
-
-    trackmate, nstd, nmean = load_trackmate(model_config, folder)
-
-    # train_model(model_config, trackmate)
-    test_model(bVisu=True, bMinimization=False, net_type=net_type)
 
 
 

@@ -831,10 +831,6 @@ if __name__ == "__main__":
         flag_column = trackmate.shape[1] - 1
         n_tracks = np.max(trackmate[:, 1])+1
 
-        np.save('trackmate_intermediate.npy',trackmate)
-
-    trackmate = np.load('trackmate_intermediate.npy')
-
     print('Transform table ...')
 
     new_trackmate = np.concatenate((trackmate[:, 0:4], trackmate[:, 6:8], trackmate[:, 15:17], trackmate[:, 4:6],trackmate[:, 8:10], trackmate[:, 11:15], trackmate[:, 10:11], trackmate[:, 17:19]),axis=1)
@@ -886,19 +882,26 @@ if __name__ == "__main__":
     pos = np.argwhere( trackmate[:, 17] + trackmate[:, 18] == 2)
     f_trackmate = trackmate[pos, :]
 
-    nmean = np.squeeze(np.mean(f_trackmate, axis=0))
-    nstd = 3*np.squeeze(np.std(f_trackmate, axis=0))
+    if True:
 
-    nstd[3] = nstd[2]  # x and y
-    nstd[5] = nstd[4]  # vx and vy
-    nstd[7] = nstd[6]  # accx and accy
+        nstd = np.load(f'./graphs_data/graphs_cells_2309012_490/nstd.npy')
+        nmean = np.load(f'./graphs_data/graphs_cells_2309012_490/nmean.npy')
 
-    nstd[10] = nstd[8]  # signal 1 and its derivative
-    nstd[11] = nstd[9]  # signal 2 and its derivative
+    else:
 
-    nmean[4:8] = 0
-    nmean[10:12] = 0
-    nmean[15:16] = 0
+        nmean = np.squeeze(np.mean(f_trackmate, axis=0))
+        nstd = 3*np.squeeze(np.std(f_trackmate, axis=0))
+
+        nstd[3] = nstd[2]  # x and y
+        nstd[5] = nstd[4]  # vx and vy
+        nstd[7] = nstd[6]  # accx and accy
+
+        nstd[10] = nstd[8]  # signal 1 and its derivative
+        nstd[11] = nstd[9]  # signal 2 and its derivative
+
+        nmean[4:8] = 0
+        nmean[10:12] = 0
+        nmean[15:16] = 0
 
     print('')
     print(f'x {np.round(nmean[2], 1)}+/-{np.round(nstd[2], 1)}')
