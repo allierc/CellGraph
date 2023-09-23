@@ -996,7 +996,7 @@ def train_model(model_config=None, trackmate_list=None, nstd=None, nmean=None, n
         train_model_Interaction_rollout(model_config, trackmate_list, nstd, nmean, n_tracks_list)
 
 
-def test_model(trackmate_list=None, bVisu=False, bMinimization=False, net_type='InteractionParticlesRollout'):
+def test_model(trackmate_list=None, bVisu=False, bMinimization=False, net_type='InteractionParticlesRollout', frame_start=20):
 
     print('')
     ntry = model_config['ntry']
@@ -1158,7 +1158,7 @@ def test_model(trackmate_list=None, bVisu=False, bMinimization=False, net_type='
 
 
 
-    for frame in tqdm(range(20, 240)):  # frame_list:
+    for frame in tqdm(range(frame_start, 240)):  # frame_list:
 
         model.frame = int(frame)
         pos = np.argwhere(trackmate[:, 0] == frame)
@@ -1766,7 +1766,7 @@ if __name__ == "__main__":
 
     trackmate_list, nstd, nmean, n_tracks_list = load_trackmate(model_config)
     # train_model(model_config, trackmate_list, nstd, nmean, n_tracks_list)
-    test_model(trackmate_list=trackmate_list, bVisu=False, bMinimization=False, net_type=model_config['net_type'])
+    test_model(trackmate_list=trackmate_list, bVisu=False, bMinimization=False, net_type=model_config['net_type'], frame_start=200)
 
     # model_config = {'ntry': 506,
     #                 'dataset': ['2309012_490', '2309012_491', '2309012_492'],
