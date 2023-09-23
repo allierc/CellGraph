@@ -1764,7 +1764,7 @@ if __name__ == "__main__":
                     'cell_embedding': 3,
                     'net_type':'InteractionParticlesRollout'}
 
-    # trackmate_list, nstd, nmean, n_tracks_list = load_trackmate(model_config)
+    trackmate_list, nstd, nmean, n_tracks_list = load_trackmate(model_config)
     # train_model(model_config, trackmate_list, nstd, nmean, n_tracks_list)
     test_model(trackmate_list=trackmate_list, bVisu=False, bMinimization=False, net_type=model_config['net_type'])
 
