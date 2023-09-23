@@ -1218,7 +1218,7 @@ def test_model(model_config=None, trackmate_list=None, bVisu=False, bMinimizatio
             true_ERK2.append(trackmate_true[list_all[pos[0]] + 1, 8])
             model_ERK2.append(trackmate[list_all[pos[0]] + 1, 8])
 
-        if bVisu: #frame == 200:
+        if bVisu & (frame%4==0): #frame == 200:
 
             # print(f'{frame} {np.round(loss.item(), 3)}  {np.round(model_lin.score(xx, yy), 3)} mask {np.round(torch.sum(mask).item() / mask.shape[0], 3)}')
 
@@ -1763,7 +1763,7 @@ if __name__ == "__main__":
 
     trackmate_list, nstd, nmean, n_tracks_list = load_trackmate(model_config)
     # train_model(model_config, trackmate_list, nstd, nmean, n_tracks_list)
-    test_model(model_config, trackmate_list=trackmate_list, bVisu=True, bMinimization=False, frame_start=200)
+    test_model(model_config, trackmate_list=trackmate_list, bVisu=True, bMinimization=False, frame_start=160)
 
     model_config = {'ntry': 506,
                     'dataset': ['2309012_490', '2309012_491', '2309012_492'],
@@ -1826,7 +1826,7 @@ if __name__ == "__main__":
 
     trackmate_list, nstd, nmean, n_tracks_list = load_trackmate(model_config)
     # train_model(model_config, trackmate_list, nstd, nmean, n_tracks_list)
-    test_model(model_config, trackmate_list=trackmate_list, bVisu=True, bMinimization=False, frame_start=200)
+    test_model(model_config, trackmate_list=trackmate_list, bVisu=True, bMinimization=False, frame_start=160)
 
     model_config = {'ntry': 507,
                     'dataset': ['2309012_490'],
@@ -1889,7 +1889,7 @@ if __name__ == "__main__":
 
     trackmate_list, nstd, nmean, n_tracks_list = load_trackmate(model_config)
     # train_model(model_config, trackmate_list, nstd, nmean, n_tracks_list)
-    test_model(model_config, trackmate_list=trackmate_list, bVisu=True, bMinimization=False, frame_start=200)
+    test_model(model_config, trackmate_list=trackmate_list, bVisu=True, bMinimization=False, frame_start=160)
 
     model_config = {'ntry': 508,
                     'dataset': ['2309012_490'],
@@ -1952,7 +1952,7 @@ if __name__ == "__main__":
 
     trackmate_list, nstd, nmean, n_tracks_list = load_trackmate(model_config)
     # train_model(model_config, trackmate_list, nstd, nmean, n_tracks_list)
-    test_model(model_config, trackmate_list=trackmate_list, bVisu=True, bMinimization=False, frame_start=200)
+    test_model(model_config, trackmate_list=trackmate_list, bVisu=True, bMinimization=False, frame_start=160)
 
     model_config = {'ntry': 509,
                     'dataset': ['2309012_490'],
@@ -2015,7 +2015,7 @@ if __name__ == "__main__":
 
     trackmate_list, nstd, nmean, n_tracks_list = load_trackmate(model_config)
     # train_model(model_config, trackmate_list, nstd, nmean, n_tracks_list)
-    test_model(model_config, trackmate_list=trackmate_list, bVisu=True, bMinimization=False, frame_start=200)
+    test_model(model_config, trackmate_list=trackmate_list, bVisu=True, bMinimization=False, frame_start=160)
 
     model_config = {'ntry': 510,
                     'dataset': '2309012_490',
@@ -2079,7 +2079,7 @@ if __name__ == "__main__":
 
     trackmate_list, nstd, nmean, n_tracks_list = load_trackmate(model_config)
     #train_model(model_config, trackmate_list, nstd, nmean, n_tracks_list)
-    test_model(model_config, trackmate_list=trackmate_list, bVisu=True, bMinimization=False, frame_start=200)
+    test_model(model_config, trackmate_list=trackmate_list, bVisu=True, bMinimization=False, frame_start=160)
 
     model_config = {'ntry': 511,
                     'dataset': ['2309012_490', '2309012_491', '2309012_492'],
@@ -2143,7 +2143,7 @@ if __name__ == "__main__":
 
     trackmate_list, nstd, nmean, n_tracks_list = load_trackmate(model_config)
     # train_model(model_config, trackmate_list, nstd, nmean, n_tracks_list)
-    test_model(model_config, trackmate_list=trackmate_list, bVisu=True, bMinimization=False, frame_start=200)
+    test_model(model_config, trackmate_list=trackmate_list, bVisu=True, bMinimization=False, frame_start=160)
 
 
 
