@@ -1958,6 +1958,8 @@ if __name__ == "__main__":
 
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
+    print('Version 1.0 24 sept 2023')
+
     print(f'Device :{device}')
 
     # model_config = {'ntry': 501,

@@ -26,16 +26,6 @@ import seaborn as sns
 import pandas as pd
 from sklearn.linear_model import LinearRegression
 import time
-import json
-from geomloss import SamplesLoss
-from tifffile import imread
-from prettytable import PrettyTable
-from kneed import KneeLocator
-from sklearn.datasets import make_blobs
-from sklearn.cluster import KMeans
-from sklearn.metrics import silhouette_score
-from sklearn.preprocessing import StandardScaler
-
 def voronoi_finite_polygons_2d(vor, radius=0.05):
     """
     Reconstruct infinite voronoi regions in a 2D diagram to finite
@@ -397,7 +387,7 @@ if __name__ == "__main__":
 
     model_lin = LinearRegression()
 
-    device = torch.device("cuda:1" if torch.cuda.is_available() else "cpu")
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     print(f'Device :{device}')
 
@@ -419,250 +409,40 @@ if __name__ == "__main__":
                         'Max Ch1': 15,
                         'Sum Ch1': 16,
                         'Std Ch1': 17,
-                        'Ctrst Ch1': 18,
-                        'SNR Ch1': 19,
-                        'El. x0': 20,
-                        'El. y0': 21,
-                        'El. long axis': 22,
-                        'El. sh. axis': 23,
-                        'El. angle': 24,
-                        'El. a.r.': 25,
-                        'Area': 26,
-                        'Perim.': 27,
-                        'Circ.': 28,
-                        'Solidity': 29,
-                        'Shape index': 30}
+                        'Mean Ch2': 18,
+                        'Median Ch2': 19,
+                        'Min Ch2': 20,
+                        'Max Ch2': 21,
+                        'Sum Ch2': 22,
+                        'Std Ch2': 23,
+                        'Ctrst Ch1': 24,
+                        'SNR Ch1': 25,
+                        'Ctrst Ch2': 26,
+                        'SNR Ch2': 27,
+                        'El. x0': 28,
+                        'El. y0': 29,
+                        'El. long axis': 30,
+                        'El. sh. axis': 31,
+                        'El. angle': 32,
+                        'El. a.r.': 33,
+                        'Area': 34,
+                        'Perim.': 35,
+                        'Circ.': 36,
+                        'Solidity': 37,
+                        'Shape index': 38}
 
 
-    model_config = {'ntry': 490,
-                    'datum': '2309012_490',
-                    'trackmate_metric' : {'Label': 0,
-                    'Spot_ID': 1,
-                    'Track_ID': 2,
-                    'Quality': 3,
-                    'X': 4,
-                    'Y': 5,
-                    'Z': 6,
-                    'T': 7,
-                    'Frame': 8,
-                    'R': 9,
-                    'Visibility': 10,
-                    'Spot color': 11,
-                    'Mean Ch1': 12,
-                    'Median Ch1': 13,
-                    'Min Ch1': 14,
-                    'Max Ch1': 15,
-                    'Sum Ch1': 16,
-                    'Std Ch1': 17,
-                    'Ctrst Ch1': 18,
-                    'SNR Ch1': 19,
-                    'El. x0': 20,
-                    'El. y0': 21,
-                    'El. long axis': 22,
-                    'El. sh. axis': 23,
-                    'El. angle': 24,
-                    'El. a.r.': 25,
-                    'Area': 26,
-                    'Perim.': 27,
-                    'Circ.': 28,
-                    'Solidity': 29,
-                    'Shape index': 30},
 
-                    'metric_list' : ['Frame', 'Track_ID', 'X', 'Y', 'Mean Ch1', 'Area'],
-
-                    'file_folder' : '/home/allierc@hhmi.org/Desktop/signaling/HGF-ERK signaling/fig 1/B_E/210105/trackmate/',
-
-                    'dx':0.908,
-                    'dt':5.0,
-                    'h': 0,
-                    'msg': 1,
-                    'aggr': 0,
-                    'rot_mode':1,
-                    'embedding': 3,
-                    'cell_embedding': 1,
-                    'time_embedding': False,
-                    'n_mp_layers': 3,
-                    'hidden_size': 32,
-                    'bNoise': False,
-                    'noise_level': 0,
-                    'batch_size': 4,
-                    'bRollout': False,
-                    'rollout_window': 2,
-                    'frame_start': 20,
-                    'frame_end': 240,   # [240, 228, 228]
-                    'n_tracks': 3561,
-                    'radius': 0.15}
-
-    model_config = {'ntry': 491,
-                    'datum': '2309012_491',
-                    'trackmate_metric' : {'Label': 0,
-                    'Spot_ID': 1,
-                    'Track_ID': 2,
-                    'Quality': 3,
-                    'X': 4,
-                    'Y': 5,
-                    'Z': 6,
-                    'T': 7,
-                    'Frame': 8,
-                    'R': 9,
-                    'Visibility': 10,
-                    'Spot color': 11,
-                    'Mean Ch1': 12,
-                    'Median Ch1': 13,
-                    'Min Ch1': 14,
-                    'Max Ch1': 15,
-                    'Sum Ch1': 16,
-                    'Std Ch1': 17,
-                    'Ctrst Ch1': 18,
-                    'SNR Ch1': 19,
-                    'El. x0': 20,
-                    'El. y0': 21,
-                    'El. long axis': 22,
-                    'El. sh. axis': 23,
-                    'El. angle': 24,
-                    'El. a.r.': 25,
-                    'Area': 26,
-                    'Perim.': 27,
-                    'Circ.': 28,
-                    'Solidity': 29,
-                    'Shape index': 30},
-
-                    'metric_list' : ['Frame', 'Track_ID', 'X', 'Y', 'Mean Ch1', 'Area'],
-
-                    'file_folder' : '/home/allierc@hhmi.org/Desktop/signaling/HGF-ERK signaling/fig 1/B_E/210108/trackmate/',
-
-                    'dx':0.908,
-                    'dt':5.0,
-                    'h': 0,
-                    'msg': 1,
-                    'aggr': 0,
-                    'rot_mode':1,
-                    'embedding': 3,
-                    'cell_embedding': 1,
-                    'time_embedding': False,
-                    'n_mp_layers': 3,
-                    'hidden_size': 32,
-                    'bNoise': False,
-                    'noise_level': 0,
-                    'batch_size': 4,
-                    'bRollout': False,
-                    'rollout_window': 2,
-                    'frame_start': 20,
-                    'frame_end': 228,   # [240, 228, 228]
-                    'n_tracks': 3561,
-                    'radius': 0.15}
-
-    model_config = {'ntry': 492,
-                    'datum': '2309012_492',
-                    'trackmate_metric' : {'Label': 0,
-                    'Spot_ID': 1,
-                    'Track_ID': 2,
-                    'Quality': 3,
-                    'X': 4,
-                    'Y': 5,
-                    'Z': 6,
-                    'T': 7,
-                    'Frame': 8,
-                    'R': 9,
-                    'Visibility': 10,
-                    'Spot color': 11,
-                    'Mean Ch1': 12,
-                    'Median Ch1': 13,
-                    'Min Ch1': 14,
-                    'Max Ch1': 15,
-                    'Sum Ch1': 16,
-                    'Std Ch1': 17,
-                    'Ctrst Ch1': 18,
-                    'SNR Ch1': 19,
-                    'El. x0': 20,
-                    'El. y0': 21,
-                    'El. long axis': 22,
-                    'El. sh. axis': 23,
-                    'El. angle': 24,
-                    'El. a.r.': 25,
-                    'Area': 26,
-                    'Perim.': 27,
-                    'Circ.': 28,
-                    'Solidity': 29,
-                    'Shape index': 30},
-
-                    'metric_list' : ['Frame', 'Track_ID', 'X', 'Y', 'Mean Ch1', 'Area'],
-
-                    'file_folder' : '/home/allierc@hhmi.org/Desktop/signaling/HGF-ERK signaling/fig 1/B_E/210109/trackmate/',
-
-                    'dx':0.908,
-                    'dt':5.0,
-                    'h': 0,
-                    'msg': 1,
-                    'aggr': 0,
-                    'rot_mode':1,
-                    'embedding': 3,
-                    'cell_embedding': 1,
-                    'time_embedding': False,
-                    'n_mp_layers': 3,
-                    'hidden_size': 32,
-                    'bNoise': False,
-                    'noise_level': 0,
-                    'batch_size': 4,
-                    'bRollout': False,
-                    'rollout_window': 2,
-                    'frame_start': 20,
-                    'frame_end': 228,   # [240, 228, 228]
-                    'n_tracks': 3561,
-                    'radius': 0.15}
-
-    print('')
-    print('Generating data ... ')
-
-    trackmate_metric = model_config['trackmate_metric']
-    print('')
-    ntry = model_config['ntry']
-    print(f'ntry: {ntry}')
-    datum = model_config['datum']
-    print(f'datum: {datum}')
-    file_folder = model_config['file_folder']
-    print(f'file_folder: {file_folder}')
-    dx = model_config['dx']
-    print(f'dx: {dx} microns')
-    dt = model_config['dt']
-    print(f'dt: {dt} minutes')
-    metric_list = model_config['metric_list']
-    print(f'metric_list: {metric_list}')
-    frame_end = model_config['frame_end']
-    print(f'frame_end: {frame_end}')
-
-    folder = f'./graphs_data/graphs_cells_{datum}/'
-    os.makedirs(folder, exist_ok=True)
-
-    copyfile(os.path.realpath(__file__), os.path.join(folder, 'generation_code.py'))
-
-    json_ = json.dumps(model_config)
-    f = open(f"{folder}/model_config.json", "w")
-    f.write(json_)
-    f.close()
-
-    file_folder = model_config['file_folder']
-    print(file_folder)
-
+    metric_list = ['Frame', 'Track_ID', 'X', 'Y', 'Mean Ch2', 'Mean Ch1']
     radius = 0.05
-
     bMotility = True
-    # frame_end=240
+    frame_end=88
 
-    l_dir = os.path.join('.', 'log')
-    log_dir = os.path.join(l_dir, 'try_{}'.format(ntry))
-    print('log_dir: {}'.format(log_dir))
-    os.makedirs(log_dir, exist_ok=True)
-    os.makedirs(os.path.join(log_dir, 'models'), exist_ok=True)
-    os.makedirs(os.path.join(log_dir, 'data', 'val_outputs'), exist_ok=True)
+    file_folder='/home/allierc@hhmi.org/Desktop/signaling/H2B-ERK signaling/'
 
-    copyfile(os.path.realpath(__file__), os.path.join(log_dir, 'training_code.py'))
-
-    print (f'{file_folder}trackmate/transformed_spots_try{ntry}.npy')
-
+    # 1st pass      # Voronoi / normalization
     if True:
-
-        trackmate_csv = pd.read_csv(f'{file_folder}/spots.csv', header=3, usecols=trackmate_metric.values(),names=trackmate_metric.keys())
+        trackmate_csv = pd.read_csv(f'{file_folder}/spots.csv', header=3, usecols=trackmate_metric.values(), names=trackmate_metric.keys())
         n = 0
         for metric in metric_list:
             track = np.array(trackmate_csv[metric])
@@ -680,18 +460,16 @@ if __name__ == "__main__":
         trackmate = np.concatenate((trackmate, np.zeros((trackmate.shape[0], 12))), axis=1)
         n_tracks = np.max(trackmate[:, 1])
 
+        # plt.ion()
         # frame=20
-        # I = imread(f'/home/allierc@hhmi.org/Desktop/signaling/HGF-ERK signaling/fig 1/B_E/210109//ACTIVITY.tif')
+        # I = imread('/home/allierc@hhmi.org/Desktop/signaling/H2B-ERK signaling/elife-78837-fig4-video1-ERK.tif')
         # I = np.array(I)
         # t = np.squeeze(I[frame, :, :])
-        # plt.imshow(t, vmin=0, vmax=2)
+        # plt.imshow(t)
         # pos = np.argwhere(trackmate[:, 0] == frame)
         # xx0 = trackmate[pos, 2:4]
         # xx0 = np.squeeze(xx0)
-        # xx0 = xx0 * nstd[2]
-        # xx0[:, 0] = xx0[:, 0] + nmean[2]
-        # xx0[:, 1] = xx0[:, 1] + nmean[3]
-        # plt.scatter(xx0[:, 0], xx0[:, 1], s=125, marker='.', vmin=-0.6, vmax=0.6)
+        # plt.scatter(xx0[:, 0], xx0[:, 1], s=4, marker='.', c='r')
 
         pos = trackmate[1:, 1] - trackmate[:-1, 1]
         pos_n = np.concatenate((pos, np.ones(1)))
@@ -749,7 +527,6 @@ if __name__ == "__main__":
                         points_out = np.concatenate((points_out, new_point))
 
                 # fig = plt.figure(figsize=(25, 15))
-                # plt.ion()
                 # ax = fig.add_subplot(2, 2, 3)
                 # plt.imshow(I_new)
                 # ax = fig.add_subplot(2, 2, 1)
@@ -766,7 +543,6 @@ if __name__ == "__main__":
                 def perimeter(poly):
                     """A sequence of (x,y) numeric coordinates pairs """
                     return abs(sum(math.hypot(x0 - x1, y0 - y1) for ((x0, y0), (x1, y1)) in segments(poly)))
-
 
                 for p1, region in enumerate(regions[0:points.shape[0]]):
                     polygon = vertices[region]
@@ -805,7 +581,6 @@ if __name__ == "__main__":
 
         print ('Filling gap Trackmate ...')
 
-
         time.sleep(0.5)
         new_trackmate = trackmate[0:1, :]
         for p in tqdm(range(1, trackmate.shape[0] - 1)):
@@ -824,167 +599,235 @@ if __name__ == "__main__":
                 new_trackmate = np.concatenate((new_trackmate, trackmate[p:p + 1, :]), axis=0)
         trackmate = new_trackmate
 
+        print('Derivative ...')
 
-        trackmate = np.concatenate((trackmate, trackmate[-1:, :]), axis=0)
-        trackmate [-1,0]=-1
+        time.sleep(0.5)
 
         flag_column = trackmate.shape[1] - 1
         n_tracks = np.max(trackmate[:, 1])+1
 
-    print('Transform table ...')
+        # derivative calculation
 
-    new_trackmate = np.concatenate((trackmate[:, 0:4], trackmate[:, 6:8], trackmate[:, 15:17], trackmate[:, 4:6],trackmate[:, 8:10], trackmate[:, 11:15], trackmate[:, 10:11], trackmate[:, 17:19]),axis=1)
+        n_list=[2,3,4,5,6,7]
+        for n in n_list:
+            diff = trackmate[1:, n] - trackmate[:-1, n]
+            diff = np.concatenate((np.zeros(1), diff))
+            trackmate[:, n+4] = diff
+        n_list=[6,7]
+        for n in n_list:
+            diff = trackmate[1:, n] - trackmate[:-1, n]
+            diff = np.concatenate((np.zeros(1), diff))
+            trackmate[:, n+9] = diff
+        n_list=[13]
+        for n in n_list:
+            diff = trackmate[1:, n] - trackmate[:-1, n]
+            diff = np.concatenate((np.zeros(1), diff))
+            trackmate[:, n+1] = diff
 
-    trackmate = np.concatenate((new_trackmate, np.zeros((trackmate.shape[0], 15))), axis=1)
+        for k in range(5,trackmate.shape[0]):
+            if trackmate[k-1,1]!=trackmate[k,1]:
+                trackmate[k, 6:10] = 0
+                trackmate[k, 14:17] = 0
 
-    print('Derivative ...')
+        trackmate = np.concatenate((trackmate, np.zeros((trackmate.shape[0], 34))), axis=1)
+        trackmate[:, 17:19] = 0
 
-    time.sleep(0.5)
+        for k in range(5, trackmate.shape[0] - 1):
+            if trackmate[k-5,1]==trackmate[k,1]:
+                trackmate [k,17]=1 #flag pred-5
+            if trackmate[k + 1 , 1] == trackmate[k, 1]:
+                trackmate[k, 18] = 1  # flag pred+1
 
-    trackmate[:, 2:4] = trackmate[:, 2:4] * dx  # conversion to microns
+        # normalization
 
-    flag_column = trackmate.shape[1] - 1
-    n_tracks = np.max(trackmate[:, 1]) + 1
-
-    # derivative calculation
-
-    n_list = [2, 3, 8, 9]
-    for n in n_list:
-        diff = trackmate[1:, n] - trackmate[:-1, n]
-        diff = np.concatenate((np.zeros(1), diff))
-        trackmate[:, n + 2] = diff
-    trackmate[:, 4:6] = trackmate[:, 4:6] / dt  # conversion to microns/minutes
-    n_list = [4, 5]
-    for n in n_list:
-        diff = trackmate[1:, n] - trackmate[:-1, n]
-        diff = np.concatenate((np.zeros(1), diff))
-        trackmate[:, n + 2] = diff
-    n_list = [14]
-    for n in n_list:
-        diff = trackmate[1:, n] - trackmate[:-1, n]
-        diff = np.concatenate((np.zeros(1), diff))
-        trackmate[:, n + 1] = diff
-
-    for k in range(5, trackmate.shape[0]):
-        if trackmate[k - 1, 1] != trackmate[k, 1]:
-            trackmate[k, 4:8] = 0
-            trackmate[k, 10:12] = 0
-            trackmate[k, 15:16] = 0
-
-    for k in range(1, trackmate.shape[0] - 1):
-        if trackmate[k - 1, 1] == trackmate[k, 1]:
-            trackmate[k, 17] = 1  # flag pred-1
-        if trackmate[k + 1, 1] == trackmate[k, 1]:
-            trackmate[k, 18] = 1  # flag pred+1
-
-    # normalization
-
-    pos = np.argwhere( trackmate[:, 17] + trackmate[:, 18] == 2)
-    f_trackmate = trackmate[pos, :]
-
-    if True:
-
-        nstd = np.load(f'./graphs_data/graphs_cells_2309012_490/nstd.npy')
-        nmean = np.load(f'./graphs_data/graphs_cells_2309012_490/nmean.npy')
-
-    else:
+        temp = trackmate[:,17]+trackmate[:,18]
+        pos = np.argwhere(temp==2)
+        f_trackmate=trackmate[pos,:]
 
         nmean = np.squeeze(np.mean(f_trackmate, axis=0))
-        nstd = 3*np.squeeze(np.std(f_trackmate, axis=0))
+        nstd = np.squeeze(3*np.std(f_trackmate, axis=0))
 
         nstd[3] = nstd[2]  # x and y
-        nstd[5] = nstd[4]  # vx and vy
-        nstd[7] = nstd[6]  # accx and accy
+        nstd[6] = nstd[2] / 100  # vx and x
+        nstd[7] = nstd[2] / 100  # vy and x
 
-        nstd[10] = nstd[8]  # signal 1 and its derivative
-        nstd[11] = nstd[9]  # signal 2 and its derivative
+        nstd[15] = nstd[6] # accx and x
+        nstd[16] = nstd[6] # accy and x
 
-        nmean[4:8] = 0
-        nmean[10:12] = 0
-        nmean[15:16] = 0
+        nmean[6:10] = 0
+        nstd[8] = nstd[4]  # signal and its derivative
 
-    print('')
-    print(f'x {np.round(nmean[2], 1)}+/-{np.round(nstd[2], 1)}')
-    print(f'y {np.round(nmean[3], 1)}+/-{np.round(nstd[3], 1)}')
-    print(f'vx {np.round(nmean[4], 4)}+/-{np.round(nstd[4], 4)}')
-    print(f'vy {np.round(nmean[5], 4)}+/-{np.round(nstd[5], 4)}')
-    print(f'ax {np.round(nmean[6], 4)}+/-{np.round(nstd[6], 4)}')
-    print(f'ay {np.round(nmean[7], 4)}+/-{np.round(nstd[7], 4)}')
-    print(f'signal 1 {np.round(nmean[8], 2)}+/-{np.round(nstd[8], 2)}')
-    print(f'signal 2 {np.round(nmean[9], 2)}+/-{np.round(nstd[9], 2)}')
-    print(f'signal 1 deriv {np.round(nmean[10], 2)}+/-{np.round(nstd[10], 2)}')
-    print(f'signal 2 deriv {np.round(nmean[11], 2)}+/-{np.round(nstd[11], 2)}')
-    print(f'degree {np.round(nmean[16], 2)}+/-{np.round(nstd[16], 2)}')
-    print('')
+        trackmate[:, 2:17] = (trackmate[:, 2:17] - nmean[2:17]) / nstd[2:17]
 
-    # normalization
+        c=nstd[6]/nstd[2]
 
-    trackmate[:, 2:17] = (trackmate[:, 2:17] - nmean[2:17]) / nstd[2:17]
+        print ('Fillling past and future ...')
 
-    print('Fillling past and future ...')
+        time.sleep(0.5)
 
-    time.sleep(0.5)
+        for k in tqdm(range(5,trackmate.shape[0]-1)):
 
-    for k in tqdm(range(0, trackmate.shape[0] - 1)):
+            if trackmate[k-5,1]==trackmate[k,1]:
+                trackmate [k,17]=1 #flag pred-5
 
-        if trackmate[k + 1, 1] == trackmate[k, 1]:
-            trackmate[k, 22:32] = trackmate[k + 1, 2:12]
+                if np.sum(trackmate[k-1,19:24])!=0:
+
+                    trackmate[k, 19:42]=trackmate[k-1, 20:43]
+                    trackmate[k, 23] = trackmate[k - 1, 2] #x
+                    trackmate[k, 28] = trackmate[k - 1, 3] #y
+                    trackmate[k, 33] = trackmate[k - 1, 6] #vx
+                    trackmate[k, 38] = trackmate[k - 1, 7] #vy
+                    trackmate[k, 43] = trackmate[k - 1, 4] #erk
+
+                else:
+
+                    trackmate[k, 19:24] = trackmate[k-5:k,2]
+                    trackmate[k, 24:29] = trackmate[k - 5:k, 3] #y
+                    trackmate[k, 29:34] = trackmate[k - 5:k, 6] #vx
+                    trackmate[k, 34:39] = trackmate[k - 5:k, 7] #vy
+                    trackmate[k, 39:44] = trackmate[k - 5:k, 4] #vy
+
+
+            if trackmate[k + 1 , 1] == trackmate[k, 1]:
+
+                trackmate[k, 18] = 1  # flag pred+1
+
+                trackmate[k, 44] = trackmate[k+1,2] #x
+                trackmate[k, 45] = trackmate[k + 1, 3] #y
+                trackmate[k, 46] = trackmate[k + 1, 6] #vx
+                trackmate[k, 47] = trackmate[k + 1, 7] #vy
+                trackmate[k, 48] = trackmate[k + 1, 15] #ax
+                trackmate[k, 49] = trackmate[k + 1, 16] #ay
+                trackmate[k, 50] = trackmate[k + 1, 4] #erk
+                trackmate[k, 51] = trackmate[k + 1, 8] #erk deriv
+
+            else:
+
+                trackmate[k, 18] = 0  # flag pred+1
+
+                trackmate[k, 44] = trackmate[k,2] #x
+                trackmate[k, 45] = trackmate[k, 3] #y
+                trackmate[k, 46] = 0
+                trackmate[k, 47] = 0
+                trackmate[k, 48] = 0
+                trackmate[k, 49] = 0
+                trackmate[k, 50] = trackmate[k, 4] #erk
+                trackmate[k, 51] = trackmate[k, 8] #erk deriv
+
+        print('Saving data ...')
+
+        np.save(f'{file_folder}/transformed_spots.npy', trackmate)
+        np.save(f'{file_folder}/nstd.npy', nstd)
+        np.save(f'{file_folder}/nmean.npy', nmean)
+
+    #3d pass
+    if True:
+        trackmate = np.load(f'{file_folder}/trackmate/transformed_spots_try{ntry}.npy')
+
+        if ntry>315:
+            nstd = np.load(f'/home/allierc@hhmi.org/Desktop/signaling/HGF-ERK signaling/fig 1/B_E/210105/trackmate/nstd_try315.npy')
+            nmean = np.load(f'/home/allierc@hhmi.org/Desktop/signaling/HGF-ERK signaling/fig 1/B_E/210105/trackmate/nmean_try315.npy')
+        else:
+            nstd = np.load(f'{file_folder}/trackmate/nstd_try{ntry}.npy')
+            nmean = np.load(f'{file_folder}/trackmate/nmean_try{ntry}.npy')
+
+        trackmate[:,17:19]=0
+
+        n_frames = np.max(trackmate[:, 0]) + 1
+        n_tracks = np.max(trackmate[:, 1]) + 1
+
+        guide=np.zeros((int(n_frames),2))
+        u=np.zeros((int(n_tracks),2))
+
+        pos = np.argwhere(trackmate[:, 0] == 0)
+        guide[0,:]=np.mean(trackmate[pos, 2:4],axis=0)
+
+        print('Guide coordinate ...')
+        time.sleep(0.5)
+
+        for k in tqdm(range(1,int(n_frames))):
+
+            pos=np.argwhere(trackmate[:, 0]==k)
+            guide[k,:]=guide[k-1,:]+np.mean(trackmate[pos, 6:8],axis=0)*nstd[6]/nstd[2]
+
+            fig = plt.figure(figsize=(6, 6))
+            plt.scatter(trackmate[pos, 2], trackmate[pos, 3], s=25, marker='.',c='k')
+            plt.scatter(guide[0:k,0],guide[0:k,1], s=5, marker='.',c='r')
+            plt.xlim([-1+guide[k,0], 1.4+guide[k,0]])
+            plt.ylim([-1+guide[k,1], 1+guide[k,1]])
+            plt.savefig(f"./ReconsGraph/Fig_{k}.tif")
+            plt.close()
+
+        for k in tqdm(range(1, int(n_tracks))):
+            pos = np.argwhere(trackmate[:, 1] == k)
+            if len(pos)>0:
+                first_frame=trackmate[pos[0],0]
+                trackmate[pos,17:19]=trackmate[pos[0],2:4]-guide[int(first_frame),:]
+
+        for k in tqdm(range(1,int(n_frames))):
+            pos=np.argwhere(trackmate[:, 0]==k)
+            plt.scatter(trackmate[pos, 17], trackmate[pos, 18], s=25, marker='.', c='b')
+            plt.xlim([-1, 1.4])
+            plt.ylim([-1, 1])
+            plt.savefig(f"./ReconsGraph/U_Fig_{k}.tif")
+            plt.close()
+
+        print('Saving data ...')
+        np.save(f'{file_folder}/trackmate/transformed_spots_try{ntry}.npy', trackmate)
+
+    # model_erk = InteractionParticles()
+    # state_dict = torch.load(f"./log/try_173/models/best_model.pt")
+    # model_erk.load_state_dict(state_dict['model_state_dict'])
+    # model_erk.eval()
 
     print('Trackmate quality check...')
 
     time.sleep(0.5)
 
-    c0 = nstd[4] / nstd[2] * dt
-    c1 = nstd[6] / nstd[4]
+    c = nstd[6] / nstd[2]
 
-    for k in tqdm(range(1, trackmate.shape[0] - 1)):
+    for k in tqdm(range(5, trackmate.shape[0] - 1)):
         if trackmate[k-1, 1] == trackmate[k+1, 1]:
 
-            if np.abs(trackmate[k+1, 4] * c0 - (trackmate[k+1, 2] - trackmate[k, 2])) > 1E-3:
+            if np.abs(trackmate[k+1, 6] * c - (trackmate[k+1, 2] - trackmate[k, 2])) > 1E-3:
                 print(f'Pb check vx at row {k}')
-            if np.abs(trackmate[k+1, 5] * c0 - (trackmate[k+1, 3] - trackmate[k, 3])) > 1E-3:
+            if np.abs(trackmate[k+1, 7] * c - (trackmate[k+1, 3] - trackmate[k, 3])) > 1E-3:
                 print(f'Pb check vy at row {k}')
 
-            if np.abs(trackmate[k+1, 6] * c1 - (trackmate[k+1, 4] - trackmate[k, 4])) > 1E-3:
+            if np.abs(trackmate[k+1, 15] - (trackmate[k+1, 6] - trackmate[k, 6])) > 1E-3:
                 print(f'Pb check accx at row {k}')
-            if np.abs(trackmate[k+1, 7] * c1 - (trackmate[k+1, 5] - trackmate[k, 5])) > 1E-3:
+            if np.abs(trackmate[k+1, 16] - (trackmate[k+1, 7] - trackmate[k, 7])) > 1E-3:
                 print(f'Pb check accy at row {k}')
 
-    # for k in tqdm(range(5, trackmate.shape[0] - 1)):
-    #     if trackmate[k-6, 1] == trackmate[k+1, 1]:
-    #
-    #         if np.abs(trackmate[k, 6] * c - (trackmate[k, 2] - trackmate[k, 23])) > 1E-3:
-    #             print(f'Pb check vx at row {k}')
-    #         if np.abs(trackmate[k, 7] * c - (trackmate[k, 3] - trackmate[k, 28])) > 1E-3:
-    #             print(f'Pb check vy at row {k}')
-    #         if np.abs(trackmate[k, 15] - (trackmate[k, 6] - trackmate[k, 33])) > 1E-3:
-    #             print(f'Pb check ax at row {k}')
-    #         if np.abs(trackmate[k, 16] - (trackmate[k, 7] - trackmate[k, 38])) > 1E-3:
-    #             print(f'Pb check ay at row {k}')
-    #         if np.abs(trackmate[k, 8] - (trackmate[k, 4] - trackmate[k, 43])) > 1E-3:
-    #             print(f'Pb check erk deriv at row {k}')
-    #
-    #         if np.abs(trackmate[k, 44]-trackmate[k+1, 2])> 1E-3:
-    #             print(f'Pb check x+1 at row {k}')
-    #         if np.abs(trackmate[k, 45]-trackmate[k+1, 3])> 1E-3:
-    #             print(f'Pb check y+1 at row {k}')
-    #         if np.abs(trackmate[k, 46] - trackmate[k + 1, 6]) > 1E-3:
-    #             print(f'Pb check vx+1 at row {k}')
-    #         if np.abs(trackmate[k, 47] - trackmate[k + 1, 7]) > 1E-3:
-    #             print(f'Pb check vy+1 at row {k}')
-    #         if np.abs(trackmate[k, 48] - trackmate[k + 1, 15]) > 1E-3:
-    #             print(f'Pb check ax+1 at row {k}')
-    #         if np.abs(trackmate[k, 49] - trackmate[k + 1, 16]) > 1E-3:
-    #             print(f'Pb check ay+1 at row {k}')
-    #         if np.abs(trackmate[k, 50] - trackmate[k + 1, 4]) > 1E-3:
-    #             print(f'Pb check ax+1 at row {k}')
-    #         if np.abs(trackmate[k, 51] - trackmate[k + 1, 8]) > 1E-3:
-    #             print(f'Pb check ay+1 at row {k}')
+    for k in tqdm(range(5, trackmate.shape[0] - 1)):
+        if trackmate[k-6, 1] == trackmate[k+1, 1]:
+
+            if np.abs(trackmate[k, 6] * c - (trackmate[k, 2] - trackmate[k, 23])) > 1E-3:
+                print(f'Pb check vx at row {k}')
+            if np.abs(trackmate[k, 7] * c - (trackmate[k, 3] - trackmate[k, 28])) > 1E-3:
+                print(f'Pb check vy at row {k}')
+            if np.abs(trackmate[k, 15] - (trackmate[k, 6] - trackmate[k, 33])) > 1E-3:
+                print(f'Pb check ax at row {k}')
+            if np.abs(trackmate[k, 16] - (trackmate[k, 7] - trackmate[k, 38])) > 1E-3:
+                print(f'Pb check ay at row {k}')
+            if np.abs(trackmate[k, 8] - (trackmate[k, 4] - trackmate[k, 43])) > 1E-3:
+                print(f'Pb check erk deriv at row {k}')
+
+            if np.abs(trackmate[k, 44]-trackmate[k+1, 2])> 1E-3:
+                print(f'Pb check x+1 at row {k}')
+            if np.abs(trackmate[k, 45]-trackmate[k+1, 3])> 1E-3:
+                print(f'Pb check y+1 at row {k}')
+            if np.abs(trackmate[k, 46] - trackmate[k + 1, 6]) > 1E-3:
+                print(f'Pb check vx+1 at row {k}')
+            if np.abs(trackmate[k, 47] - trackmate[k + 1, 7]) > 1E-3:
+                print(f'Pb check vy+1 at row {k}')
+            if np.abs(trackmate[k, 48] - trackmate[k + 1, 15]) > 1E-3:
+                print(f'Pb check ax+1 at row {k}')
+            if np.abs(trackmate[k, 49] - trackmate[k + 1, 16]) > 1E-3:
+                print(f'Pb check ay+1 at row {k}')
+            if np.abs(trackmate[k, 50] - trackmate[k + 1, 4]) > 1E-3:
+                print(f'Pb check ax+1 at row {k}')
+            if np.abs(trackmate[k, 51] - trackmate[k + 1, 8]) > 1E-3:
+                print(f'Pb check ay+1 at row {k}')
 
     print('Check done')
-
-    print('Saving data ...')
-
-    np.save(f'{folder}/transformed_spots.npy', trackmate)
-    np.save(f'{folder}/nstd.npy', nstd)
-    np.save(f'{folder}/nmean.npy', nmean)
