@@ -269,10 +269,8 @@ class InteractionParticles(pyg.nn.MessagePassing):
 
         if (self.msg == 0):
             self.lin_edge = MLP(input_size=1, hidden_size=self.hidden_size0, output_size=self.output_size0, layers=self.nlayers0, device=self.device)
-        if (self.msg==1):
-            self.lin_edge = MLP(input_size=8, hidden_size=self.hidden_size0, output_size=self.output_size0, layers=self.nlayers0, device=self.device)
-        if (self.msg==2):
-            self.lin_edge = MLP(input_size=7, hidden_size=self.hidden_size0, output_size=self.output_size0, layers=self.nlayers0, device=self.device)
+        else: #(self.msg==1):
+            self.lin_edge = MLP(input_size=6, hidden_size=self.hidden_size0, output_size=self.output_size0, layers=self.nlayers0, device=self.device)
 
         self.lin_update = MLP(input_size=self.output_size0+self.cell_embedding+2, hidden_size=self.hidden_size1, output_size=1, layers=self.nlayers1, device=self.device)
 
@@ -325,18 +323,20 @@ class InteractionParticles(pyg.nn.MessagePassing):
         if self.rot_mode == 0:
             x_jp = xj - xi
             y_jp = yj - yi
-            vx_p = vxj - vxi
-            vy_p = vyj - vyi
+            vx_p = vxj
+            vy_p = vyj
 
         if self.rot_mode == 1:
             x_jp = (xj - xi) * cos_i + (yj - yi) * sin_i
             y_jp = -(xj - xi) * sin_i + (yj - yi) * cos_i
+            vx_p = (vxj - vxi) * cos_i + (vyj - vyi) * sin_i
+            vy_p = -(vxj - vxi) * sin_i + (vyj - vyi) * cos_i
 
-            vx_ip = vxi * cos_i + vyi * sin_i
-            vy_ip = -vxi * sin_i + vyi * cos_i
-
-            vx_jp = vxj * cos_i + vyj * sin_i
-            vy_jp = -vxj * sin_i + vyj * cos_i
+        if self.rot_mode == 2:
+            x_jp = (xj - xi) * cos_i + (yj - yi) * sin_i
+            y_jp = -(xj - xi) * sin_i + (yj - yi) * cos_i
+            vx_p = (vxj - vxi) * cos_j + (vyj - vyi) * sin_j
+            vy_p = -(vxj - vxi) * sin_j + (vyj - vyi) * cos_j
 
         cell_id=x_i[:, 1].detach().cpu().numpy()
 
@@ -345,9 +345,9 @@ class InteractionParticles(pyg.nn.MessagePassing):
         if self.msg==0:
             return diff_erk*0
         elif self.msg==1:
-            in_features = torch.cat((d, x_jp, y_jp, vx_ip, vy_ip, vx_jp, vy_jp, diff_erk), dim=-1)
+            in_features = torch.cat((d, x_jp, y_jp, vx_p, vy_p, diff_erk), dim=-1)
         elif self.msg==2:
-            in_features = torch.cat((x_jp, y_jp, x_ip, vy_ip, vx_jp, vy_jp), dim=-1)
+            in_features = torch.cat((x_jp, y_jp, vx_p, vy_p), dim=-1)
 
         out = self.lin_edge(in_features)
 
@@ -1268,8 +1268,6 @@ def test_model(model_config=None, trackmate_list=None, bVisu=False, bMinimizatio
             pred = model(data=dataset, data_id=0)
         else:
             pred = model(data=dataset, data_id=0)
-
-        # pred = torch.tensor(trackmate_true[list_all + 1, 10:11], device=device)
 
 
         loss = criteria((pred[:, :] + x[:, 8:9]) * mask * nstd[8], target * mask * nstd[8])
@@ -2287,7 +2285,7 @@ def load_model_config (id=505):
         return model_config_test
 
     #516 new version
-    model_config_test = {'ntry': 512,
+    model_config_test = {'ntry': 516,
                     'dataset':  ['2309012_490'], #  ['2309012_490', '2309012_491', '2309012_492'],
                     'trackmate_metric' : {'Label': 0,
                     'Spot_ID': 1,
@@ -2354,7 +2352,7 @@ def load_model_config (id=505):
         return model_config_test
 
     #517 new version
-    model_config_test = {'ntry': 513,
+    model_config_test = {'ntry': 517,
                          'dataset': ['2309012_490'],  # ['2309012_490', '2309012_491', '2309012_492'],
                          'trackmate_metric': {'Label': 0,
                                               'Spot_ID': 1,
@@ -2423,10 +2421,147 @@ def load_model_config (id=505):
     print('watch out model_config not find')
     return model_config_test
 
+    #518 new version
+    model_config_test = {'ntry': 518,
+                    'dataset':  ['2309012_490', '2309012_491', '2309012_492'],
+                    'trackmate_metric' : {'Label': 0,
+                    'Spot_ID': 1,
+                    'Track_ID': 2,
+                    'Quality': 3,
+                    'X': 4,
+                    'Y': 5,
+                    'Z': 6,
+                    'T': 7,
+                    'Frame': 8,
+                    'R': 9,
+                    'Visibility': 10,
+                    'Spot color': 11,
+                    'Mean Ch1': 12,
+                    'Median Ch1': 13,
+                    'Min Ch1': 14,
+                    'Max Ch1': 15,
+                    'Sum Ch1': 16,
+                    'Std Ch1': 17,
+                    'Ctrst Ch1': 18,
+                    'SNR Ch1': 19,
+                    'El. x0': 20,
+                    'El. y0': 21,
+                    'El. long axis': 22,
+                    'El. sh. axis': 23,
+                    'El. angle': 24,
+                    'El. a.r.': 25,
+                    'Area': 26,
+                    'Perim.': 27,
+                    'Circ.': 28,
+                    'Solidity': 29,
+                    'Shape index': 30},
+                    'metric_list' : ['Frame', 'Track_ID', 'X', 'Y', 'Mean Ch1', 'Area'],
+                    'file_folder' : '/home/allierc@hhmi.org/Desktop/signaling/HGF-ERK signaling/fig 1/B_E/210105/trackmate/',
+                    'dx':0.908,
+                    'dt':5.0,
+                    'upgrade_type': 0,
+                    'msg': 1,
+                    'aggr': 0,
+                    'rot_mode':1,
+                    'time_embedding': False,
+                    'n_mp_layers0': 5,
+                    'hidden_size0': 128,
+                    'output_size0': 6,
+                    'n_mp_layers1':2,
+                    'hidden_size1': 16,
+                    'n_mp_layers': 5,
+                    'hidden_size': 128,
+                    'bNoise': False,
+                    'noise_level': 0,
+                    'batch_size': 4,
+                    'rollout_window': 2,
+                    'frame_start': 20,
+                    'frame_end': [200, 182, 182],  # [241,228,228],
+                    'n_tracks': 0,
+                    'radius': 0.15,
+                    'remove_update_U': True,
+                    'train_MLPs': True,
+                    'cell_embedding': 2,
+                    'batch_size':4,
+                    'net_type':'InteractionParticles',
+                    'training_mode': 't+1'}
+    if model_config_test['ntry']==id:
+        return model_config_test
+
+    #519 new version
+    model_config_test = {'ntry': 519,
+                         'dataset': ['2309012_490', '2309012_491', '2309012_492'],
+                         'trackmate_metric': {'Label': 0,
+                                              'Spot_ID': 1,
+                                              'Track_ID': 2,
+                                              'Quality': 3,
+                                              'X': 4,
+                                              'Y': 5,
+                                              'Z': 6,
+                                              'T': 7,
+                                              'Frame': 8,
+                                              'R': 9,
+                                              'Visibility': 10,
+                                              'Spot color': 11,
+                                              'Mean Ch1': 12,
+                                              'Median Ch1': 13,
+                                              'Min Ch1': 14,
+                                              'Max Ch1': 15,
+                                              'Sum Ch1': 16,
+                                              'Std Ch1': 17,
+                                              'Ctrst Ch1': 18,
+                                              'SNR Ch1': 19,
+                                              'El. x0': 20,
+                                              'El. y0': 21,
+                                              'El. long axis': 22,
+                                              'El. sh. axis': 23,
+                                              'El. angle': 24,
+                                              'El. a.r.': 25,
+                                              'Area': 26,
+                                              'Perim.': 27,
+                                              'Circ.': 28,
+                                              'Solidity': 29,
+                                              'Shape index': 30},
+                         'metric_list': ['Frame', 'Track_ID', 'X', 'Y', 'Mean Ch1', 'Area'],
+                         'file_folder': '/home/allierc@hhmi.org/Desktop/signaling/HGF-ERK signaling/fig 1/B_E/210105/trackmate/',
+                         'dx': 0.908,
+                         'dt': 5.0,
+                         'upgrade_type': 0,
+                         'msg': 1,
+                         'aggr': 0,
+                         'rot_mode': 1,
+                         'time_embedding': False,
+                         'n_mp_layers0': 5,
+                         'hidden_size0': 128,
+                         'output_size0': 1,
+                         'n_mp_layers1': 2,
+                         'hidden_size1': 16,
+                         'n_mp_layers': 5,
+                         'hidden_size': 128,
+                         'bNoise': False,
+                         'noise_level': 0,
+                         'batch_size': 4,
+                         'rollout_window': 2,
+                         'frame_start': 20,
+                         'frame_end': [200, 182, 182],  # [241,228,228],
+                         'n_tracks': 0,
+                         'radius': 0.15,
+                         'remove_update_U': True,
+                         'train_MLPs': True,
+                         'cell_embedding': 2,
+                         'batch_size': 4,
+                         'net_type': 'InteractionParticles',
+                         'training_mode': 't+1'}
+    if model_config_test['ntry'] == id:
+        return model_config_test
+
+    print('watch out model_config not find')
+    return model_config_test
+
 
 if __name__ == "__main__":
 
-    device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+    device = torch.device("cuda:1" if torch.cuda.is_available() else "cpu")
 
     print('Version 1.0 24 sept 2023')
 
@@ -2435,14 +2570,14 @@ if __name__ == "__main__":
     scaler = StandardScaler()
     S_e = SamplesLoss(loss="sinkhorn", p=2, blur=.05)
 
-    for gtest in range(512,520):
+    for gtest in range(516,518):
 
         model_config = load_model_config(id=gtest)
         for key, value in model_config.items():
             print(key, ":", value)
         trackmate_list, nstd, nmean, n_tracks_list = load_trackmate(model_config)
         train_model(model_config, trackmate_list, nstd, nmean, n_tracks_list)
-        # R2_list = test_model(model_config, trackmate_list=trackmate_list, bVisu=True, bMinimization=False, frame_start=160)
+        R2_list = test_model(model_config, trackmate_list=trackmate_list, bVisu=True, bMinimization=False, frame_start=160)
 
 
 
