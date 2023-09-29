@@ -767,7 +767,6 @@ if __name__ == "__main__":
                     """A sequence of (x,y) numeric coordinates pairs """
                     return abs(sum(math.hypot(x0 - x1, y0 - y1) for ((x0, y0), (x1, y1)) in segments(poly)))
 
-
                 for p1, region in enumerate(regions[0:points.shape[0]]):
                     polygon = vertices[region]
                     trackmate[ppos[p1], 10] = len(region)      # degree
@@ -804,7 +803,6 @@ if __name__ == "__main__":
             trackmate[pos, 13] = 0
 
         print ('Filling gap Trackmate ...')
-
 
         time.sleep(0.5)
         new_trackmate = trackmate[0:1, :]
@@ -883,7 +881,6 @@ if __name__ == "__main__":
     f_trackmate = trackmate[pos, :]
 
     if True:
-
         nstd = np.load(f'./graphs_data/graphs_cells_2309012_490/nstd.npy')
         nmean = np.load(f'./graphs_data/graphs_cells_2309012_490/nmean.npy')
 

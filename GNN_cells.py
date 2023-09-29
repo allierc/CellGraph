@@ -28,6 +28,9 @@ from shapely.geometry import MultiPoint, Point, Polygon
 import seaborn as sns
 import pandas as pd
 import umap
+from torch_geometric.loader import DataLoader
+from sklearn.preprocessing import StandardScaler
+from geomloss import SamplesLoss
 
 def load_trackmate(model_config):
 
@@ -46,6 +49,9 @@ def load_trackmate(model_config):
     n_tracks = np.max(trackmate[:, 1])
     model_config['n_tracks'] = n_tracks + 1
     print(f'n_tracks: {n_tracks}')
+
+    # degree no normalization
+    trackmate[:,16] = trackmate[:,16] * nstd[16] + nmean[16]
 
     print('Trackmate quality check...')
     time.sleep(0.5)
@@ -96,6 +102,8 @@ def load_trackmate(model_config):
             trackmate[-1, 0] = -1
             trackmate_list.append(trackmate)
             n_tracks_list.append(np.max(trackmate[:, 1]))
+            # degree no normalization
+            trackmate[:, 16] = trackmate[:, 16] * nstd[16] + nmean[16]
 
             print('Trackmate quality check...')
 
@@ -233,42 +241,44 @@ class MLP(nn.Module):
             x = F.relu(x)
         x = self.layers[-1](x)
         return x
-class InteractionParticlesRollout(pyg.nn.MessagePassing):
+class InteractionParticles(pyg.nn.MessagePassing):
     """Interaction Network as proposed in this paper:
     https://proceedings.neurips.cc/paper/2016/hash/3147da8ab4a0437c15ef51a5cc7f2dc4-Abstract.html"""
     def __init__(self, model_config, device):   # in_feats=9, out_feats=2, num_layers=2, hidden=16):
 
-        super(InteractionParticlesRollout, self).__init__(aggr='add')  # "Add" aggregation.
+        super(InteractionParticles, self).__init__(aggr='add')  # "Add" aggregation.
 
         self.device=device
-        self.h = model_config['h']
+        self.upgrade_type = model_config['upgrade_type']
         self.msg=model_config['msg']
         self.aggr=model_config['aggr']
         self.cell_embedding = model_config['cell_embedding']
-        self.nlayers = model_config['n_mp_layers']
-        self.hidden_size = model_config['hidden_size']
+        self.nlayers0 = model_config['n_mp_layers0']
+
         self.noise_level = model_config['noise_level']
         self.n_tracks = model_config['n_tracks']
         self.rot_mode = model_config['rot_mode']
         self.frame_end = model_config['frame_end']
 
-        if (self.msg == 0) | (self.msg == 4) :
-            self.lin_edge = MLP(input_size=1 + self.cell_embedding, hidden_size=self.hidden_size, output_size=1, layers=self.nlayers, device=self.device)
-        elif (self.msg == 2) :
-            self.lin_edge = MLP(input_size=4 + self.cell_embedding, hidden_size=self.hidden_size, output_size=1, layers=self.nlayers, device=self.device)
-        elif (self.msg == 3):
-            self.lin_edge = MLP(input_size=4 + self.cell_embedding, hidden_size=self.hidden_size, output_size=1, layers=self.nlayers, device=self.device)
-        else: #(self.msg==1):
-            self.lin_edge = MLP(input_size=5 + self.cell_embedding, hidden_size=self.hidden_size, output_size=1, layers=self.nlayers, device=self.device)
+        self.nlayers0 = model_config['n_mp_layers0']
+        self.hidden_size0 = model_config['hidden_size0']
+        self.output_size0 = model_config['output_size0']
 
-        if self.h > 1:
-            self.lin_update = MLP(input_size=self.h, hidden_size=16, output_size=1, layers=2, device=self.device)
-        else:
-            self.lin_update = MLP(input_size=1, hidden_size=16, output_size=1, layers=2, device=self.device)
+        self.nlayers1 = model_config['n_mp_layers1']
+        self.hidden_size1 = model_config['hidden_size1']
+
+        if (self.msg == 0):
+            self.lin_edge = MLP(input_size=1, hidden_size=self.hidden_size0, output_size=self.output_size0, layers=self.nlayers0, device=self.device)
+        else: #(self.msg==1):
+            self.lin_edge = MLP(input_size=6, hidden_size=self.hidden_size0, output_size=self.output_size0, layers=self.nlayers0, device=self.device)
+
+
+        self.lin_update = MLP(input_size=self.output_size0+self.cell_embedding+2, hidden_size=self.hidden_size1, output_size=1, layers=self.nlayers1, device=self.device)
+
 
         self.a = nn.Parameter(torch.tensor(np.ones((3,int(self.n_tracks+1), self.cell_embedding)), requires_grad=True, device=self.device))
         self.t = nn.Parameter(torch.tensor(np.ones((3,int(self.n_tracks+1), 1)), requires_grad=False, device=self.device))
-        self.b = nn.Parameter(torch.tensor(np.ones((3,int(self.n_tracks+1),3)), device=self.device, requires_grad=True))
+
 
     def forward(self, data, data_id):
 
@@ -286,18 +296,12 @@ class InteractionParticlesRollout(pyg.nn.MessagePassing):
 
         # derivative of ERK activity
         cell_id = x[:, 1].detach().cpu().numpy()
-        coeff = self.b[self.data_id, cell_id]
+        embedding = self.a[self.data_id,cell_id]
 
-        if self.h == 0 :
-            pred = self.lin_update(message[:,0:1]) - coeff[:,0:1]*(x[:,8:9]-coeff[:,1:2])
-        if self.h == 1:
-            pred = self.lin_update(message[:,0:1])
-        if self.h == 2:
-            pred = self.lin_update(torch.cat((x[:, 8:9], message[:, 0:1]), dim=-1))
-        if self.h == 3:
-            pred = self.lin_update(torch.cat((x[:, 8:9], x[:, 10:11], message[:, 0:1]), dim=-1))
+        pred = self.lin_update(torch.cat((embedding, x[:, 8:9], message, x[:, 16:17]), axis=-1))
 
-        return message, pred
+
+        return pred
 
     def message(self, x_i, x_j,edge_attr):
 
@@ -315,7 +319,7 @@ class InteractionParticlesRollout(pyg.nn.MessagePassing):
         vxj=x_j[:, 4:5]
         vyj=x_j[:, 5:6]
 
-        diff_erk = x_j[:, 8:9] / torch.clamp(torch.sqrt((x_i[:, 16:17] * self.nstd[16] + self.nmean[16]) * (x_j[:, 16:17] * self.nstd[16] + self.nmean[16])), min=1)
+        diff_erk = x_j[:, 8:9] - x_i[:, 8:9]
 
         if self.rot_mode == 0:
             x_jp = xj - xi
@@ -336,29 +340,17 @@ class InteractionParticlesRollout(pyg.nn.MessagePassing):
             vy_p = -(vxj - vxi) * sin_j + (vyj - vyi) * cos_j
 
         cell_id=x_i[:, 1].detach().cpu().numpy()
-        coeff = self.a[self.data_id,cell_id]
-
-        #coeff = self.a[cell_id] * self.t[self.frame]
 
         d = torch.clamp(edge_attr,min=0.01)
 
         if self.msg==0:
             return diff_erk*0
         elif self.msg==1:
-            in_features = torch.cat((x_jp, y_jp, vx_p/d, vy_p/d, diff_erk), dim=-1)
+            in_features = torch.cat((d, x_jp, y_jp, vx_p, vy_p, diff_erk), dim=-1)
         elif self.msg==2:
-            in_features = torch.cat((x_jp, y_jp, vx_p/d, vy_p/d), dim=-1)
-        elif self.msg==3:
             in_features = torch.cat((x_jp, y_jp, vx_p, vy_p), dim=-1)
-        elif self.msg==4:
-            in_features = diff_erk * coeff[:, 2:3]
-        else: # self.msg==4:
-            in_features = diff_erk*0
 
-        if self.cell_embedding > 0:
-            out = self.lin_edge(torch.cat((in_features, coeff), dim=-1))
-        else:
-            out = self.lin_edge(in_features)
+        out = self.lin_edge(in_features)
 
         return out
 
@@ -367,32 +359,13 @@ class InteractionParticlesRollout(pyg.nn.MessagePassing):
 
         return aggr_out     #self.lin_node(aggr_out)
 
-def train_model_Interaction_rollout(model_config=None, trackmate_list=None, nstd=None, nmean=None, n_tracks_list=None):
+def train_model_Interaction(model_config=None, trackmate_list=None, nstd=None, nmean=None, n_tracks_list=None):
 
     ntry = model_config['ntry']
-    bRollout = model_config['bRollout']
-
-    print(f'Training {ntry}')
-    print(f'rot_mode:', model_config['rot_mode'])
-
-    if model_config['h'] == 0:
-        print('H: MLP(message - b Erk)')
-    else:  # model_config['h'] == 1:
-        print('H: MLP(message)')
-
-    if model_config['msg'] == 0:
-        print('msg: 0')
-    elif model_config['msg'] == 1:
-        print('msg: MLP(x_jp, y_jp, vx_p/d, vy_p/d, diff_erk)')
-    elif model_config['msg'] == 2:
-        print('msg: MLP(x_jp, y_jp, vx_p/d, vy_p/d)')
-    elif model_config['msg'] == 3:
-        print('msg: MLP(x_jp, y_jp, vx_p, vy_p)')
-    elif model_config['msg'] == 4:
-        print('msg: MLP(diff_erk)')
-    else:  # model_config['msg']==4:
-        print('msg: 0')
-
+    data_augmentation = model_config['rot_mode']>0
+    batch_size = model_config['batch_size']
+    training_mode = model_config['training_mode']
+    nDataset = len(model_config['dataset'])
     print('')
 
     l_dir = os.path.join('.', 'log')
@@ -403,7 +376,7 @@ def train_model_Interaction_rollout(model_config=None, trackmate_list=None, nstd
     copyfile(os.path.realpath(__file__), os.path.join(log_dir, 'training_code.py'))
 
     model = []
-    model = InteractionParticlesRollout(model_config=model_config, device=device)
+    model = InteractionParticles(model_config=model_config, device=device)
     model.nstd = nstd
     model.nmean = nmean
 
@@ -421,7 +394,9 @@ def train_model_Interaction_rollout(model_config=None, trackmate_list=None, nstd
     print(table)
     print(f"Total Trainable Params: {total_params}")
 
-    optimizer = torch.optim.Adam(model.parameters(), lr=1E-3)  # , weight_decay=5e-3)
+    lr = 1E-3
+    optimizer = torch.optim.Adam(model.parameters(), lr=lr)  # , weight_decay=5e-3)
+    print(f'Learning rates: {lr}')
     criteria = nn.MSELoss()
     model.train()
 
@@ -434,22 +409,144 @@ def train_model_Interaction_rollout(model_config=None, trackmate_list=None, nstd
 
     best_loss = np.inf
 
+    if data_augmentation:
+        data_augmentation_loop = 5
+        print(f'data_augmentation_loop: {data_augmentation_loop}')
+    else:
+        data_augmentation_loop = 1
+        print('no data augmentation ...')
 
-    for epoch in range(5000):
+    list_plot = []
+
+
+    for epoch in range(500):
+
+        if epoch == 10:
+            batch_size = model_config['batch_size']
+            print(f'batch_size: {batch_size}')
 
         if epoch == 100:
-            optimizer = torch.optim.Adam(model.parameters(), lr=1E-4)  # , weight_decay=5e-3)
+            lr=1E-4
+            optimizer = torch.optim.Adam(model.parameters(), lr=lr)  # , weight_decay=5e-3)
+            print(f'Learning rates: {lr}')
 
-        mserr_list = []
+        loss_list = []
 
-        for data_id in range(len(model_config['dataset'])):
+        if training_mode == 't+1':
+
+            for N in range(1, np.sum(model_config['frame_end']) * data_augmentation_loop * batch_size):
+
+                data_id = np.random.randint(nDataset)
+                dataset_batch = []
+                mask_batch = []
+                for batch in range(batch_size):
+
+                    k = 1 + np.random.randint(model_config['frame_end'][data_id] - 2)
+
+                    pos = np.argwhere(trackmate_list[data_id][:, 0] == k)
+                    list_all = pos[:, 0].astype(int)
+                    mask = torch.tensor(np.ones(list_all.shape[0]), device=device)
+                    for k in range(len(mask)):
+                        if trackmate[list_all[k] - 1, 1] != trackmate[list_all[k] + 1, 1]:
+                            mask[k] = 0
+                    mask = mask[:, None]
+                    if batch==0:
+                        mask_batch=mask
+                    else:
+                        mask_batch=torch.cat((mask_batch, mask), axis=0)
+
+                    x = torch.tensor(trackmate_list[data_id][list_all, 0:17], device=device)
+                    dataset = data.Data(x=x, pos=x[:, 2:4])
+                    transform = T.Compose([T.Delaunay(), T.FaceToEdge(), T.Distance(norm=False)])
+                    dataset = transform(dataset)
+                    distance = dataset.edge_attr.detach().cpu().numpy()
+                    pos = np.argwhere(distance < model_config['radius'])
+                    edges = dataset.edge_index
+                    dataset = data.Data(x=x, edge_index=edges[:, pos[:, 0]],
+                                        edge_attr=torch.tensor(distance[pos[:, 0]], device=device))
+                    dataset_batch.append(dataset)
+
+                    y = torch.tensor(trackmate_list[data_id][list_all + 1, 8:9], device=device)
+                    if batch==0:
+                        y_batch=y
+                    else:
+                        y_batch=torch.cat((y_batch, y), axis=0)
+
+                batch_loader = DataLoader(dataset_batch, batch_size=batch_size, shuffle=False)
+                optimizer.zero_grad()
+
+                for batch in batch_loader:
+                    pred = model(batch, data_id=data_id)
+
+                loss = ((pred - y_batch)*mask_batch).norm(2)
+                loss.backward()
+                optimizer.step()
+                loss_list.append(loss.item())
+
+            if (np.mean(loss_list) < best_loss):
+                best_loss = np.mean(loss_list)
+                torch.save({'model_state_dict': model.state_dict(), 'optimizer_state_dict': optimizer.state_dict()}, os.path.join(log_dir, 'models', 'best_model_new.pt'))
+                print(f"Epoch: {epoch} Loss: {np.round(np.mean(loss_list), 4)} saving model")
+            else:
+                print(f"Epoch: {epoch} Loss: {np.round(np.mean(loss_list), 4)}")
+
+            list_plot.append(np.mean(loss_list))
+
+            model.a.data = torch.clamp(model.a.data, min=-4, max=4)
+            embedding = model.a.detach().cpu().numpy()
+            for k in range(3):
+                embedding[k] = scaler.fit_transform(embedding[k])
+
+            fig = plt.figure(figsize=(13, 8))
+            # plt.ion()
+
+            ax = fig.add_subplot(2, 3, 1)
+            plt.plot(list_plot, color='k')
+            if epoch<100:
+                plt.xlim([0, 100])
+            else:
+                plt.xlim([0, 500])
+            # plt.ylim([0, 0.02])
+            plt.ylabel('Loss', fontsize=10)
+            plt.xlabel('Epochs', fontsize=10)
+
+            for k in range(3):
+                ax = fig.add_subplot(2, 3, 4+k)
+                plt.scatter(embedding[k][:, 0], embedding[k][:, 1], s=1, color='k')
+                plt.xlabel('Embedding 0', fontsize=12)
+                plt.ylabel('Embedding 1', fontsize=12)
+                plt.xlim([-3.1, 3.1])
+                plt.ylim([-3.1, 3.1])
+
+            if (epoch % 10 == 0) & (epoch > 0):
+                best_loss = np.mean(loss_list)
+                torch.save({'model_state_dict': model.state_dict(), 'optimizer_state_dict': optimizer.state_dict()}, os.path.join(log_dir, 'models', 'best_model_new.pt'))
+                R2_list = test_model(model_config, trackmate_list=trackmate_list, bVisu=False, bMinimization=False, frame_start=160)
+                model.train()
+
+            if (epoch > 9):
+
+                ax = fig.add_subplot(2, 3, 2)
+                plt.plot(160+np.arange(len(R2_list)), R2_list, c='k')
+                plt.ylim([0, 1])
+                plt.xlabel('Frame', fontsize=12)
+                plt.ylabel('R2', fontsize=12)
+
+            plt.tight_layout()
+            plt.savefig(f"./tmp_training/Fig_{ntry}_{epoch}.tif")
+            plt.close()
+
+
+
+
+
+        if training_mode == 'regressive':
 
             trackmate = trackmate_list[data_id].copy()
             trackmate_true = trackmate_list[data_id].copy()
 
             for frame in range(20, model_config['frame_end'][data_id]):  # frame_list:
 
-                model.frame = int(frame)
                 pos = np.argwhere(trackmate[:, 0] == frame)
 
                 list_all = pos[:, 0].astype(int)
@@ -489,6 +586,7 @@ def train_model_Interaction_rollout(model_config=None, trackmate_list=None, nstd
                 print('Save model')
                 best_loss = np.mean(mserr_list)
                 torch.save({'model_state_dict': model.state_dict(), 'optimizer_state_dict': optimizer.state_dict()}, os.path.join(log_dir, 'models', 'best_model_new.pt'))
+                rmserr_list = test_model(model_config, trackmate_list=trackmate_list, bVisu=True, bMinimization=False,frame_start=160)
 
     print(' end of training')
     print(' ')
@@ -594,23 +692,23 @@ class InteractionNetwork(pyg.nn.MessagePassing):
     def __init__(self, hidden_size, layers, h, msg, device):
         super().__init__(aggr='add')  # "Add" aggregation.
 
-        self.hidden_size = hidden_size
-        self.h = h
+        self.upgrade_typeidden_size = hidden_size
+        self.upgrade_type = h
         self.layers = layers
         self.msg = msg
         self.device =device
 
         if (self.msg == 0) | (self.msg==3):
-             self.lin_edge = MLP2(input_size=1, hidden_size=self.hidden_size, output_size=7, layers=self.layers, device=self.device)
+             self.lin_edge = MLP2(input_size=1, hidden_size=self.upgrade_typeidden_size, output_size=7, layers=self.layers, device=self.device)
         if (self.msg == 1):
-            self.lin_edge = MLP2(input_size=13, hidden_size=self.hidden_size, output_size=7, layers=self.layers, device=self.device)
+            self.lin_edge = MLP2(input_size=13, hidden_size=self.upgrade_typeidden_size, output_size=7, layers=self.layers, device=self.device)
         if (self.msg == 2):
-            self.lin_edge = MLP2(input_size=14, hidden_size=self.hidden_size, output_size=7, layers=self.layers, device=self.device)
+            self.lin_edge = MLP2(input_size=14, hidden_size=self.upgrade_typeidden_size, output_size=7, layers=self.layers, device=self.device)
 
-        if self.h == 0:
-            self.lin_node = MLP2(input_size=12, hidden_size=self.hidden_size, output_size=7, layers=self.layers, device=self.device)
+        if self.upgrade_type == 0:
+            self.lin_node = MLP2(input_size=12, hidden_size=self.upgrade_typeidden_size, output_size=7, layers=self.layers, device=self.device)
         else:
-            self.lin_node = MLP2(input_size=64, hidden_size=self.hidden_size, output_size=7, layers=self.layers, device=self.device)
+            self.lin_node = MLP2(input_size=64, hidden_size=self.upgrade_typeidden_size, output_size=7, layers=self.layers, device=self.device)
 
         self.rnn = torch.nn.GRUCell(14, 64,device=self.device,dtype=torch.float64)
 
@@ -618,7 +716,7 @@ class InteractionNetwork(pyg.nn.MessagePassing):
 
         aggr = self.propagate(edge_index, x=(x, x), edge_feature=edge_feature)
 
-        if self.h==0:
+        if self.upgrade_type==0:
             node_out = self.lin_node(torch.cat((x[:,:-2], aggr), dim=-1))
             prev_node_feature = node_out[:, :-2]
             prev_edge_feature = edge_feature[:,:-2]
@@ -686,14 +784,14 @@ class InteractionNetworkEmb(pyg.nn.MessagePassing):
     def __init__(self, layers, embedding, device, h):
         super().__init__(aggr='add')  # "Add" aggregation.
 
-        self.h = h
+        self.upgrade_type = h
         self.layers = layers
         self.device =device
         self.embedding = embedding
 
         self.lin_edge = MLP2(input_size=3*self.embedding, hidden_size=3*self.embedding, output_size=self.embedding, layers= self.layers, device=self.device)
 
-        if self.h == 0:
+        if self.upgrade_type == 0:
             self.lin_node = MLP2(input_size=2*self.embedding, hidden_size=2*self.embedding, output_size=self.embedding, layers= self.layers, device=self.device)
         else:
             self.lin_node = MLP2(input_size=64, hidden_size=self.embedding, output_size=self.embedding, layers= self.layers, device=self.device)
@@ -703,7 +801,7 @@ class InteractionNetworkEmb(pyg.nn.MessagePassing):
 
         aggr = self.propagate(edge_index, x=(x, x), edge_feature=edge_feature)
 
-        if self.h==0:
+        if self.upgrade_type==0:
             node_out = self.lin_node(torch.cat((x, aggr), dim=-1))
             node_out = x + node_out
             edge_out = edge_feature + self.new_edges
@@ -730,29 +828,29 @@ class ResNetGNN(torch.nn.Module):
     def __init__(self, model_config, device):
         super().__init__()
 
-        self.hidden_size = model_config['hidden_size']
+        self.upgrade_typeidden_size = model_config['hidden_size']
         self.embedding = model_config['embedding']
         self.nlayers = model_config['n_mp_layers']
-        self.h = model_config['h']
+        self.upgrade_type = model_config['upgrade_type']
         self.noise_level = model_config['noise_level']
         self.n_tracks = model_config['n_tracks']
         self.msg = model_config['msg']
         self.device = device
         self.output_angle = model_config['output_angle']
         self.cell_embedding = model_config['cell_embedding']
-        self.edge_init = EdgeNetwork(self.hidden_size, layers=3)
+        self.edge_init = EdgeNetwork(self.upgrade_typeidden_size, layers=3)
 
         if self.embedding > 0:
             self.layer = torch.nn.ModuleList(
-                [InteractionNetworkEmb(layers=3, embedding=self.embedding, h=self.h, device=self.device) for _ in
+                [InteractionNetworkEmb(layers=3, embedding=self.embedding, h=self.upgrade_type, device=self.device) for _ in
                  range(self.nlayers)])
-            self.node_out = MLP2(input_size=self.embedding, hidden_size=self.hidden_size, output_size=1, layers=3,
+            self.node_out = MLP2(input_size=self.embedding, hidden_size=self.upgrade_typeidden_size, output_size=1, layers=3,
                                 device=self.device)
         else:
-            self.layer = torch.nn.ModuleList([InteractionNetwork(hidden_size=self.hidden_size, layers=3, h=self.h,
+            self.layer = torch.nn.ModuleList([InteractionNetwork(hidden_size=self.upgrade_typeidden_size, layers=3, h=self.upgrade_type,
                                                                  msg=self.msg, device=self.device) for _ in
                                               range(self.nlayers)])
-            self.node_out = MLP2(input_size=7, hidden_size=self.hidden_size, output_size=1, layers=3,
+            self.node_out = MLP2(input_size=7, hidden_size=self.upgrade_typeidden_size, output_size=1, layers=3,
                                 device=self.device)
 
         self.a = nn.Parameter(
@@ -760,7 +858,7 @@ class ResNetGNN(torch.nn.Module):
         self.t = nn.Parameter(
             torch.tensor(np.ones((3, int(self.n_tracks + 1), self.cell_embedding)), requires_grad=False, device=self.device))
 
-        self.h_all = torch.zeros((int(self.n_tracks + 1), 64), requires_grad=False, device=self.device,dtype=torch.float64)
+        self.upgrade_type_all = torch.zeros((int(self.n_tracks + 1), 64), requires_grad=False, device=self.device,dtype=torch.float64)
 
         if self.embedding > 0:
             self.embedding_node = MLP2(input_size=5 + self.cell_embedding, hidden_size=self.embedding, output_size=self.embedding,
@@ -791,9 +889,9 @@ def train_model_ResNet(model_config=None, trackmate_list=None, nstd=None, nmean=
 
     ntry = model_config['ntry']
     print('ntry: ', model_config['ntry'])
-    if model_config['h'] == 0:
+    if model_config['upgrade_type'] == 0:
         print('no GRUcell ')
-    elif model_config['h'] == 1:
+    elif model_config['upgrade_type'] == 1:
         print('with GRUcell ')
     if (model_config['msg'] == 0) | (model_config['embedding'] > 0):
         print('msg: 0')
@@ -805,7 +903,6 @@ def train_model_ResNet(model_config=None, trackmate_list=None, nstd=None, nmean=
         print('msg: MLP2(diff_erk)')
     else:  # model_config['msg']==4:
         print('msg: 0')
-    bRollout = model_config['bRollout']
     output_angle = model_config['output_angle']
 
     print('cell_embedding: ',  model_config['cell_embedding'])
@@ -813,7 +910,6 @@ def train_model_ResNet(model_config=None, trackmate_list=None, nstd=None, nmean=
     print('hidden_size: ', model_config['hidden_size'])
     print('n_mp_layers: ', model_config['n_mp_layers'])
     print('noise_level: ', model_config['noise_level'])
-    print('bRollout: ', model_config['bRollout'])
     print('rollout_window: ', model_config['rollout_window'])
     print(f'batch size: ', model_config['batch_size'])
     print('remove_update_U: ', model_config['remove_update_U'])
@@ -993,7 +1089,7 @@ def train_model(model_config=None, trackmate_list=None, nstd=None, nmean=None, n
     if net_type == 'ResNetGNN':
         train_model_ResNet(model_config, trackmate_list, nstd, nmean, n_tracks_list)
     else:
-        train_model_Interaction_rollout(model_config, trackmate_list, nstd, nmean, n_tracks_list)
+        train_model_Interaction(model_config, trackmate_list, nstd, nmean, n_tracks_list)
 
 def test_model(model_config=None, trackmate_list=None, bVisu=False, bMinimization=False, frame_start=20):
 
@@ -1019,17 +1115,16 @@ def test_model(model_config=None, trackmate_list=None, bVisu=False, bMinimizatio
     model_lin = LinearRegression()
 
     ntry = model_config['ntry']
-    bRollout = model_config['bRollout']
 
 
-    if net_type == 'InteractionParticlesRollout':
+    if net_type == 'InteractionParticles':
 
         print(f'Testing {ntry}')
         print(f'rot_mode:', model_config['rot_mode'])
 
-        if model_config['h'] == 0:
+        if model_config['upgrade_type'] == 0:
             print('H: MLP(message - b Erk)')
-        else:  # model_config['h'] == 1:
+        else:  # model_config['upgrade_type'] == 1:
             print('H: MLP(message)')
 
         if model_config['msg'] == 0:
@@ -1049,7 +1144,7 @@ def test_model(model_config=None, trackmate_list=None, bVisu=False, bMinimizatio
         else:  # model_config['cell_embedding'] == 2:
             print('embedding: a true t true')
 
-        model = InteractionParticlesRollout(model_config=model_config, device=device)
+        model = InteractionParticles(model_config=model_config, device=device)
         model.nstd = nstd
         model.nmean = nmean
         state_dict = torch.load(f"./log/try_{ntry}/models/best_model_new.pt")
@@ -1058,9 +1153,9 @@ def test_model(model_config=None, trackmate_list=None, bVisu=False, bMinimizatio
     if net_type == 'ResNetGNN':
 
         print('ntry: ', model_config['ntry'])
-        if model_config['h'] == 0:
+        if model_config['upgrade_type'] == 0:
             print('no GRUcell ')
-        elif model_config['h'] == 1:
+        elif model_config['upgrade_type'] == 1:
             print('with GRUcell ')
         if (model_config['msg'] == 0) | (model_config['embedding'] > 0):
             print('msg: 0')
@@ -1072,17 +1167,13 @@ def test_model(model_config=None, trackmate_list=None, bVisu=False, bMinimizatio
             print('msg: MLP2(diff_erk)')
         else:  # model_config['msg']==4:
             print('msg: 0')
-        bRollout = model_config['bRollout']
-        output_angle = model_config['output_angle']
         print('embedding: ', model_config['embedding'])
         print('hidden_size: ', model_config['hidden_size'])
         print('n_mp_layers: ', model_config['n_mp_layers'])
         print('noise_level: ', model_config['noise_level'])
-        print('bRollout: ', model_config['bRollout'])
         print('rollout_window: ', model_config['rollout_window'])
         print(f'batch size: ', model_config['batch_size'])
         print('remove_update_U: ', model_config['remove_update_U'])
-        print('output_angle: ', model_config['output_angle'])
         print('train_MLPs: ', model_config['train_MLPs'])
         print('cell_embedding: ', model_config['cell_embedding'])
 
@@ -1185,7 +1276,7 @@ def test_model(model_config=None, trackmate_list=None, bVisu=False, bMinimizatio
         dataset = data.Data(x=x, edge_index=edges[:, pos[:, 0]],
                             edge_attr=torch.tensor(distance[pos[:, 0]], device=device))
 
-        if net_type == 'InteractionParticlesRollout':
+        if net_type == 'InteractionParticles':
             message , pred = model(data=dataset, data_id=0)
         else:
             pred = model(data=dataset, data_id=0)
@@ -1204,7 +1295,7 @@ def test_model(model_config=None, trackmate_list=None, bVisu=False, bMinimizatio
         yy = yy.detach().cpu().numpy()
         model_lin.fit(xx, yy)
         R2model.append(model_lin.score(xx, yy))
-        if net_type == 'InteractionParticlesRollout':
+        if net_type == 'InteractionParticles':
             message = message.detach().cpu().numpy()
 
         # trackmate[list_all + 1,4:5] = yy
@@ -1323,7 +1414,7 @@ def test_model(model_config=None, trackmate_list=None, bVisu=False, bMinimizatio
             plt.xlabel('True ERk [a.u]', fontsize=12)
             plt.ylabel('Model Erk [a.u]', fontsize=12)
 
-            # if net_type == 'InteractionParticlesRollout':
+            # if net_type == 'InteractionParticles':
             #     ax = fig.add_subplot(3, 5, 11)
             #     plt.scatter(trackmate[list_all + 1, 2], trackmate[list_all + 1, 3], s=125, marker='.',
             #                 c=message[:, 0], vmin=-1, vmax=1)
@@ -1508,10 +1599,12 @@ def test_model(model_config=None, trackmate_list=None, bVisu=False, bMinimizatio
             plt.savefig(f"./tmp_recons/{ntry}_Fig_{frame}.tif")
             plt.close()
 
-    print(f"RMSE: {np.round(np.mean(rmserr_list), 3)} +/- {np.round(np.std(rmserr_list), 3)}     {np.round(np.mean(rmserr_list) / nstd[4] * 3, 1)} sigma ")
-    print(f"Erk: {np.round(nmean[8], 3)} +/- {np.round(nstd[8] / 3, 3)} ")
+    # print(f"RMSE: {np.round(np.mean(rmserr_list), 3)} +/- {np.round(np.std(rmserr_list), 3)}     {np.round(np.mean(rmserr_list) / nstd[4] * 3, 1)} sigma ")
+    # print(f"Erk: {np.round(nmean[8], 3)} +/- {np.round(nstd[8] / 3, 3)} ")
     print(f"R2: {np.round(np.mean(R2model), 3)} +/- {np.round(np.std(R2model), 3)} ")
     print('')
+
+    return R2_list
 
 def load_model_config (id=505):
 
@@ -1553,7 +1646,7 @@ def load_model_config (id=505):
                     'file_folder' : '/home/allierc@hhmi.org/Desktop/signaling/HGF-ERK signaling/fig 1/B_E/210105/trackmate/',
                     'dx':0.908,
                     'dt':5.0,
-                    'h': 0,
+                    'upgrade_type': 0,
                     'msg': 1,
                     'aggr': 0,
                     'rot_mode':1,
@@ -1563,21 +1656,19 @@ def load_model_config (id=505):
                     'bNoise': False,
                     'noise_level': 0,
                     'batch_size': 4,
-                    'bRollout': False,
                     'rollout_window': 2,
                     'frame_start': 20,
                     'frame_end': [200], # [241,228,228],
                     'n_tracks': 0,
                     'radius': 0.15,
-                    'output_angle': False,
                     'remove_update_U': True,
                     'train_MLPs': True,
                     'cell_embedding': 3,
-                    'net_type':'InteractionParticlesRollout'}
+                    'net_type':'InteractionParticles'}
     if model_config_test['ntry']==id:
         return model_config_test
 
-    #506
+    #506 3 datasets
     model_config_test = {'ntry': 506,
                     'dataset': ['2309012_490', '2309012_491', '2309012_492'],
                     'trackmate_metric': {'Label': 0,
@@ -1615,7 +1706,7 @@ def load_model_config (id=505):
                     'file_folder': '/home/allierc@hhmi.org/Desktop/signaling/HGF-ERK signaling/fig 1/B_E/210105/trackmate/',
                     'dx': 0.908,
                     'dt': 5.0,
-                    'h': 0,
+                    'upgrade_type': 0,
                     'msg': 1,
                     'aggr': 0,
                     'rot_mode': 1,
@@ -1625,17 +1716,15 @@ def load_model_config (id=505):
                     'bNoise': False,
                     'noise_level': 0,
                     'batch_size': 4,
-                    'bRollout': False,
                     'rollout_window': 2,
                     'frame_start': 20,
                     'frame_end': [200, 182, 182],  # [241,228,228],
                     'n_tracks': 0,
                     'radius': 0.15,
-                    'output_angle': False,
                     'remove_update_U': True,
                     'train_MLPs': True,
                     'cell_embedding': 3,
-                    'net_type': 'InteractionParticlesRollout'}
+                    'net_type': 'InteractionParticles'}
     if model_config_test['ntry']==id:
         return model_config_test
 
@@ -1677,7 +1766,7 @@ def load_model_config (id=505):
                     'file_folder': '/home/allierc@hhmi.org/Desktop/signaling/HGF-ERK signaling/fig 1/B_E/210105/trackmate/',
                     'dx': 0.908,
                     'dt': 5.0,
-                    'h': 0,
+                    'upgrade_type': 0,
                     'msg': 1,
                     'aggr': 0,
                     'rot_mode': 1,
@@ -1687,17 +1776,15 @@ def load_model_config (id=505):
                     'bNoise': False,
                     'noise_level': 0,
                     'batch_size': 4,
-                    'bRollout': False,
                     'rollout_window': 2,
                     'frame_start': 20,
                     'frame_end': [200],  # [241,228,228],
                     'n_tracks': 0,
                     'radius': 0.15,
-                    'output_angle': False,
                     'remove_update_U': True,
                     'train_MLPs': True,
                     'cell_embedding': 8,
-                    'net_type': 'InteractionParticlesRollout'}
+                    'net_type': 'InteractionParticles'}
     if model_config_test['ntry']==id:
         return model_config_test
 
@@ -1739,7 +1826,7 @@ def load_model_config (id=505):
                     'file_folder': '/home/allierc@hhmi.org/Desktop/signaling/HGF-ERK signaling/fig 1/B_E/210105/trackmate/',
                     'dx': 0.908,
                     'dt': 5.0,
-                    'h': 2,
+                    'upgrade_type': 2,
                     'msg': 1,
                     'aggr': 0,
                     'rot_mode': 1,
@@ -1749,17 +1836,15 @@ def load_model_config (id=505):
                     'bNoise': False,
                     'noise_level': 0,
                     'batch_size': 4,
-                    'bRollout': False,
                     'rollout_window': 2,
                     'frame_start': 20,
                     'frame_end': [200],  # [241,228,228],
                     'n_tracks': 0,
                     'radius': 0.15,
-                    'output_angle': False,
                     'remove_update_U': True,
                     'train_MLPs': True,
                     'cell_embedding': 3,
-                    'net_type': 'InteractionParticlesRollout'}
+                    'net_type': 'InteractionParticles'}
     if model_config_test['ntry']==id:
         return model_config_test
 
@@ -1801,7 +1886,7 @@ def load_model_config (id=505):
                     'file_folder': '/home/allierc@hhmi.org/Desktop/signaling/HGF-ERK signaling/fig 1/B_E/210105/trackmate/',
                     'dx': 0.908,
                     'dt': 5.0,
-                    'h': 3,
+                    'upgrade_type': 3,
                     'msg': 1,
                     'aggr': 0,
                     'rot_mode': 1,
@@ -1811,17 +1896,15 @@ def load_model_config (id=505):
                     'bNoise': False,
                     'noise_level': 0,
                     'batch_size': 4,
-                    'bRollout': False,
                     'rollout_window': 2,
                     'frame_start': 20,
                     'frame_end': [200],  # [241,228,228],
                     'n_tracks': 0,
                     'radius': 0.15,
-                    'output_angle': False,
                     'remove_update_U': True,
                     'train_MLPs': True,
                     'cell_embedding': 3,
-                    'net_type': 'InteractionParticlesRollout'}
+                    'net_type': 'InteractionParticles'}
     if model_config_test['ntry']==id:
         return model_config_test
 
@@ -1863,7 +1946,7 @@ def load_model_config (id=505):
                     'file_folder': '/home/allierc@hhmi.org/Desktop/signaling/HGF-ERK signaling/fig 1/B_E/210105/trackmate/',
                     'dx': 0.908,
                     'dt': 5.0,
-                    'h': 0,
+                    'upgrade_type': 0,
                     'msg': 1,
                     'aggr': 0,
                     'rot_mode': 1,
@@ -1874,13 +1957,11 @@ def load_model_config (id=505):
                     'bNoise': False,
                     'noise_level': 0,
                     'batch_size': 8,
-                    'bRollout': False,
                     'rollout_window': 2,
                     'frame_start': 20,
                     'frame_end': [200],  # [241,228,228],
                     'n_tracks': 0,
                     'radius': 0.15,
-                    'output_angle': False,
                     'remove_update_U': True,
                     'train_MLPs': True,
                     'cell_embedding': 3,
@@ -1926,7 +2007,7 @@ def load_model_config (id=505):
                     'file_folder': '/home/allierc@hhmi.org/Desktop/signaling/HGF-ERK signaling/fig 1/B_E/210105/trackmate/',
                     'dx': 0.908,
                     'dt': 5.0,
-                    'h': 0,
+                    'upgrade_type': 0,
                     'msg': 1,
                     'aggr': 0,
                     'rot_mode': 1,
@@ -1937,22 +2018,89 @@ def load_model_config (id=505):
                     'bNoise': False,
                     'noise_level': 0,
                     'batch_size': 8,
-                    'bRollout': False,
                     'rollout_window': 2,
                     'frame_start': 20,
                     'frame_end': [200, 182, 182],  # [241,228,228],
                     'n_tracks': 0,
                     'radius': 0.15,
-                    'output_angle': False,
                     'remove_update_U': True,
                     'train_MLPs': True,
                     'cell_embedding': 3,
                     'net_type': 'ResNetGNN'}
     if model_config_test['ntry']==id:
         return model_config_test
+    
+    #512 new version 
+    model_config_test = {'ntry': 512,
+                    'dataset':  ['2309012_490'], #  ['2309012_490', '2309012_491', '2309012_492'],
+                    'trackmate_metric' : {'Label': 0,
+                    'Spot_ID': 1,
+                    'Track_ID': 2,
+                    'Quality': 3,
+                    'X': 4,
+                    'Y': 5,
+                    'Z': 6,
+                    'T': 7,
+                    'Frame': 8,
+                    'R': 9,
+                    'Visibility': 10,
+                    'Spot color': 11,
+                    'Mean Ch1': 12,
+                    'Median Ch1': 13,
+                    'Min Ch1': 14,
+                    'Max Ch1': 15,
+                    'Sum Ch1': 16,
+                    'Std Ch1': 17,
+                    'Ctrst Ch1': 18,
+                    'SNR Ch1': 19,
+                    'El. x0': 20,
+                    'El. y0': 21,
+                    'El. long axis': 22,
+                    'El. sh. axis': 23,
+                    'El. angle': 24,
+                    'El. a.r.': 25,
+                    'Area': 26,
+                    'Perim.': 27,
+                    'Circ.': 28,
+                    'Solidity': 29,
+                    'Shape index': 30},
+                    'metric_list' : ['Frame', 'Track_ID', 'X', 'Y', 'Mean Ch1', 'Area'],
+                    'file_folder' : '/home/allierc@hhmi.org/Desktop/signaling/HGF-ERK signaling/fig 1/B_E/210105/trackmate/',
+                    'dx':0.908,
+                    'dt':5.0,
+                    'upgrade_type': 0,
+                    'msg': 1,
+                    'aggr': 0,
+                    'rot_mode':1,
+                    'time_embedding': False,
+                    'n_mp_layers0': 5,
+                    'hidden_size0': 64,
+                    'output_size0': 6,
+                    'n_mp_layers1':2,
+                    'hidden_size1': 16,
+                    'n_mp_layers': 5,
+                    'hidden_size': 128,
+                    'bNoise': False,
+                    'noise_level': 0,
+                    'batch_size': 4,
+                    'rollout_window': 2,
+                    'frame_start': 20,
+                    'frame_end': [200],   #   [200, 182, 182],  # [241,228,228],
+                    'n_tracks': 0,
+                    'radius': 0.15,
+                    'remove_update_U': True,
+                    'train_MLPs': True,
+                    'cell_embedding': 2,
+                    'batch_size':1,
+                    'net_type':'InteractionParticles',
+                    'training_mode': 't+1'}
+    
+    if model_config_test['ntry']==id:
+        return model_config_test
 
     print('watch out model_config not find')
     return model_config_test
+
 
 if __name__ == "__main__":
 
@@ -1962,12 +2110,17 @@ if __name__ == "__main__":
 
     print(f'Device :{device}')
 
+    scaler = StandardScaler()
+    S_e = SamplesLoss(loss="sinkhorn", p=2, blur=.05)
+
     for gtest in range(512,513):
 
         model_config = load_model_config(id=gtest)
+        for key, value in model_config.items():
+            print(key, ":", value)
         trackmate_list, nstd, nmean, n_tracks_list = load_trackmate(model_config)
         train_model(model_config, trackmate_list, nstd, nmean, n_tracks_list)
-        test_model(model_config, trackmate_list=trackmate_list, bVisu=True, bMinimization=False, frame_start=160)
+        R2_list = test_model(model_config, trackmate_list=trackmate_list, bVisu=True, bMinimization=False, frame_start=160)
 
 
 
