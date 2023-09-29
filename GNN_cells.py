@@ -1962,10 +1962,11 @@ if __name__ == "__main__":
 
     print(f'Device :{device}')
 
-    for gtest in range(505,512):
+    for gtest in range(512,513):
+
         model_config = load_model_config(id=gtest)
         trackmate_list, nstd, nmean, n_tracks_list = load_trackmate(model_config)
-        # train_model(model_config, trackmate_list, nstd, nmean, n_tracks_list)
+        train_model(model_config, trackmate_list, nstd, nmean, n_tracks_list)
         test_model(model_config, trackmate_list=trackmate_list, bVisu=True, bMinimization=False, frame_start=160)
 
 
