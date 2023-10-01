@@ -418,7 +418,7 @@ def train_model_Interaction(model_config=None, trackmate_list=None, nstd=None, n
     list_plot = []
 
 
-    for epoch in range(100):
+    for epoch in range(30):
 
         if epoch == 20:
             lr=1E-4
@@ -2428,7 +2428,7 @@ if __name__ == "__main__":
     scaler = StandardScaler()
     S_e = SamplesLoss(loss="sinkhorn", p=2, blur=.05)
 
-    for gtest in range(512,520):
+    for gtest in range(514,520):
 
         model_config = load_model_config(id=gtest)
         for key, value in model_config.items():
