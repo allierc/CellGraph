@@ -418,7 +418,7 @@ def train_model_Interaction(model_config=None, trackmate_list=None, nstd=None, n
     list_plot = []
 
 
-    for epoch in range(60):
+    for epoch in range(100):
 
         if epoch == 20:
             lr=1E-4
@@ -1562,8 +1562,6 @@ def test_model(model_config=None, trackmate_list=None, bVisu=False, bMinimizatio
             plt.legend(loc='upper right')
             plt.xlabel('Frame [a.u]', fontsize=12)
 
-
-
             # ax = fig.add_subplot(3, 5, 14)
             # pos = np.argwhere(trackmate[:, 1] == 200)
             # ppos = np.argwhere((trackmate[pos, 0] < frame + 1) & (trackmate[pos, 0] > 19))
@@ -1584,7 +1582,7 @@ def test_model(model_config=None, trackmate_list=None, bVisu=False, bMinimizatio
 
             # plt.show()
 
-            plt.savefig(f"./tmp_recons/{ntry}_Fig_{frame}.tif")
+            plt.savefig(f"./tmp_recons/Fig_{ntry}_{frame}.tif")
             plt.close()
 
     # print(f"RMSE: {np.round(np.mean(rmserr_list), 3)} +/- {np.round(np.std(rmserr_list), 3)}     {np.round(np.mean(rmserr_list) / nstd[4] * 3, 1)} sigma ")
@@ -2070,7 +2068,6 @@ def load_model_config (id=505):
                     'hidden_size': 128,
                     'bNoise': False,
                     'noise_level': 0,
-                    'batch_size': 4,
                     'rollout_window': 2,
                     'frame_start': 20,
                     'frame_end': [200],   #   [200, 182, 182],  # [241,228,228],
@@ -2079,7 +2076,7 @@ def load_model_config (id=505):
                     'remove_update_U': True,
                     'train_MLPs': True,
                     'cell_embedding': 2,
-                    'batch_size':4,
+                    'batch_size':8,
                     'net_type':'InteractionParticles',
                     'training_mode': 't+1'}
     if model_config_test['ntry']==id:
@@ -2204,7 +2201,6 @@ def load_model_config (id=505):
                     'hidden_size': 128,
                     'bNoise': False,
                     'noise_level': 0,
-                    'batch_size': 4,
                     'rollout_window': 2,
                     'frame_start': 20,
                     'frame_end': [200, 182, 182],  # [241,228,228],
@@ -2213,7 +2209,7 @@ def load_model_config (id=505):
                     'remove_update_U': True,
                     'train_MLPs': True,
                     'cell_embedding': 2,
-                    'batch_size':4,
+                    'batch_size':8,
                     'net_type':'InteractionParticles',
                     'training_mode': 't+1'}
     if model_config_test['ntry']==id:
@@ -2271,7 +2267,6 @@ def load_model_config (id=505):
                     'hidden_size': 128,
                     'bNoise': False,
                     'noise_level': 0,
-                    'batch_size': 4,
                     'rollout_window': 2,
                     'frame_start': 20,
                     'frame_end': [200, 182, 182],  # [241,228,228],
@@ -2280,7 +2275,7 @@ def load_model_config (id=505):
                     'remove_update_U': True,
                     'train_MLPs': True,
                     'cell_embedding': 2,
-                    'batch_size':4,
+                    'batch_size':8,
                     'net_type':'InteractionParticles',
                     'training_mode': 't+1'}
     if model_config_test['ntry']==id:
@@ -2338,7 +2333,6 @@ def load_model_config (id=505):
                     'hidden_size': 128,
                     'bNoise': False,
                     'noise_level': 0,
-                    'batch_size': 4,
                     'rollout_window': 2,
                     'frame_start': 20,
                     'frame_end': [200],   #   [200, 182, 182],  # [241,228,228],
@@ -2347,7 +2341,7 @@ def load_model_config (id=505):
                     'remove_update_U': True,
                     'train_MLPs': True,
                     'cell_embedding': 2,
-                    'batch_size':4,
+                    'batch_size':8,
                     'net_type':'InteractionParticles',
                     'training_mode': 't+1'}
     if model_config_test['ntry']==id:
@@ -2405,7 +2399,6 @@ def load_model_config (id=505):
                          'hidden_size': 128,
                          'bNoise': False,
                          'noise_level': 0,
-                         'batch_size': 4,
                          'rollout_window': 2,
                          'frame_start': 20,
                          'frame_end': [200],  # [200, 182, 182],  # [241,228,228],
@@ -2414,7 +2407,7 @@ def load_model_config (id=505):
                          'remove_update_U': True,
                          'train_MLPs': True,
                          'cell_embedding': 2,
-                         'batch_size': 4,
+                         'batch_size': 8,
                          'net_type': 'InteractionParticles',
                          'training_mode': 't+1'}
     if model_config_test['ntry'] == id:
