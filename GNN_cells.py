@@ -419,6 +419,13 @@ def train_model_Interaction(model_config=None, trackmate_list=None, nstd=None, n
 
     for epoch in range(30):
 
+        if epoch == 5:
+            batch_size = model_config['batch_size']
+            print(f'batchsize: {batch_size}')
+
+        if epoch % 5 == 0:
+            torch.save({'model_state_dict': model.state_dict(), 'optimizer_state_dict': optimizer.state_dict()},
+                       f'{log_dir}/models/model_new_{epoch}.pt')
         if epoch == 20:
             lr=1E-4
             optimizer = torch.optim.Adam(model.parameters(), lr=lr)  # , weight_decay=5e-3)
@@ -429,7 +436,6 @@ def train_model_Interaction(model_config=None, trackmate_list=None, nstd=None, n
         loss_list = []
 
         if training_mode == 't+1':
-
             for N in range(1, np.sum(model_config['frame_end']) * data_augmentation_loop // batch_size):
 
                 data_id = np.random.randint(nDataset)
@@ -479,117 +485,112 @@ def train_model_Interaction(model_config=None, trackmate_list=None, nstd=None, n
                 optimizer.step()
                 loss_list.append(loss.item())
 
-            if epoch == 5:
-                batch_size = model_config['batch_size']
-                print(f'batchsize: {batch_size}')
+        elif training_mode == 'regressive':
 
-            if epoch%5==0:
-                torch.save({'model_state_dict': model.state_dict(), 'optimizer_state_dict': optimizer.state_dict()},f'{log_dir}/models/model_new_{epoch}.pt')
+            regressive_step = 5
 
-            if np.mean(loss_list) < best_loss:
-                best_loss = np.mean(loss_list)
-                torch.save({'model_state_dict': model.state_dict(), 'optimizer_state_dict': optimizer.state_dict()}, os.path.join(log_dir, 'models', 'best_model_new.pt'))
-                print(f"Epoch: {epoch} Loss: {np.round(np.mean(loss_list), 4)} saving model")
-            else:
-                print(f"Epoch: {epoch} Loss: {np.round(np.mean(loss_list), 4)}")
-
-            list_plot.append(np.mean(loss_list))
-
-            model.a.data = torch.clamp(model.a.data, min=-4, max=4)
-            embedding = model.a.detach().cpu().numpy()
-
-            for k in range(nDataset):
-                embedding[k] = scaler.fit_transform(embedding[k])
-
-            fig = plt.figure(figsize=(13, 8))
-            # plt.ion()
-
-            ax = fig.add_subplot(2, 3, 1)
-            plt.plot(list_plot, color='k')
-            if epoch<100:
-                plt.xlim([0, 100])
-            else:
-                plt.xlim([0, 500])
-            if list_plot[-1] < 1:
-                plt.ylim([0, 1])
-            else:
-                plt.ylim([0, 20])
-            plt.ylabel('Loss', fontsize=10)
-            plt.xlabel('Epochs', fontsize=10)
-
-            for k in range(nDataset):
-                ax = fig.add_subplot(2, 3, 4+k)
-                plt.scatter(embedding[k][:, 0], embedding[k][:, 1], s=1, color='k')
-                plt.xlabel('Embedding 0', fontsize=12)
-                plt.ylabel('Embedding 1', fontsize=12)
-                plt.xlim([-3.1, 3.1])
-                plt.ylim([-3.1, 3.1])
-
-            if (epoch % 10 == 0) & (epoch > 0):
-                best_loss = np.mean(loss_list)
-                torch.save({'model_state_dict': model.state_dict(), 'optimizer_state_dict': optimizer.state_dict()}, os.path.join(log_dir, 'models', 'best_model_new.pt'))
-                R2_list = test_model(model_config, trackmate_list=trackmate_list, bVisu=False, bMinimization=False, frame_start=160)
-                model.train()
-
-            if (epoch > 9):
-
-                ax = fig.add_subplot(2, 3, 2)
-                plt.plot(160+np.arange(len(R2_list)), R2_list, c='k')
-                plt.ylim([0, 1])
-                plt.xlabel('Frame', fontsize=12)
-                plt.ylabel('R2', fontsize=12)
-
-            plt.tight_layout()
-            plt.savefig(f"./tmp_training/Fig_{ntry}_{epoch}.tif")
-            plt.close()
-
-        if training_mode == 'regressive':
-
+            data_id = np.random.randint(nDataset)
             trackmate = trackmate_list[data_id].copy()
             trackmate_true = trackmate_list[data_id].copy()
 
-            for frame in range(20, model_config['frame_end'][data_id]):  # frame_list:
+            for N in range(1,model_config['frame_end'][data_id]//regressive_step):  # frame_list:
 
-                pos = np.argwhere(trackmate[:, 0] == frame)
+                m = np.random.randint(model_config['frame_end'][data_id] - 1 - regressive_step)
 
-                list_all = pos[:, 0].astype(int)
-                mask = torch.tensor(np.ones(list_all.shape[0]), device=device)
-                for k in range(len(mask)):
-                    if trackmate[list_all[k] - 1, 1] != trackmate[list_all[k] + 1, 1]:
-                        mask[k] = 0
-                mask = mask[:, None]
+                for regressive_loop in range(regressive_step):
 
-                x = torch.tensor(trackmate[list_all, 0:17], device=device)
-                target = torch.tensor(trackmate_true[list_all + 1, 10:11], device=device)
+                    pos = np.argwhere(trackmate[:, 0] == m + regressive_loop)
+                    list_all = pos[:, 0].astype(int)
+                    mask = torch.tensor(np.ones(list_all.shape[0]), device=device)
+                    for k in range(len(mask)):
+                        if trackmate[list_all[k] - 1, 1] != trackmate[list_all[k] + 1, 1]:
+                            mask[k] = 0
+                    mask = mask[:, None]
 
-                dataset = data.Data(x=x, pos=x[:, 2:4])
-                transform = T.Compose([T.Delaunay(), T.FaceToEdge(), T.Distance(norm=False)])
-                dataset = transform(dataset)
-                distance = dataset.edge_attr.detach().cpu().numpy()
-                pos = np.argwhere(distance < model_config['radius'])
-                edges = dataset.edge_index
-                dataset = data.Data(x=x, edge_index=edges[:, pos[:, 0]],
-                                    edge_attr=torch.tensor(distance[pos[:, 0]], device=device))
+                    x = torch.tensor(trackmate[list_all, 0:17], device=device)
+                    target = torch.tensor(trackmate_true[list_all + 1, 10:11], device=device)
 
-                optimizer.zero_grad()
-                message, pred = model(data=dataset, data_id=data_id)
+                    dataset = data.Data(x=x, pos=x[:, 2:4])
+                    transform = T.Compose([T.Delaunay(), T.FaceToEdge(), T.Distance(norm=False)])
+                    dataset = transform(dataset)
+                    distance = dataset.edge_attr.detach().cpu().numpy()
+                    pos = np.argwhere(distance < model_config['radius'])
+                    edges = dataset.edge_index
+                    dataset = data.Data(x=x, edge_index=edges[:, pos[:, 0]],
+                                        edge_attr=torch.tensor(distance[pos[:, 0]], device=device))
 
-                loss = criteria(pred * mask, target * mask) * 3
+                    optimizer.zero_grad()
+                    pred = model(data=dataset, data_id=data_id)
 
-                loss.backward()
-                optimizer.step()
-                mserr_list.append(loss.item())
+                    loss = criteria(pred * mask, target * mask) * 3
 
-                trackmate[list_all + 1, 10:11] = np.array(pred.detach().cpu())
-                trackmate[list_all + 1, 8:9] = trackmate[list_all, 8:9] + trackmate[list_all + 1, 10:11]
+                    loss.backward()
+                    optimizer.step()
+                    loss_list.append(loss.item())
 
-            print(f"data_id: {data_id} Epoch: {epoch} Loss: {np.round(np.mean(mserr_list), 4)}")
+                    for k in range(len(mask)):
+                        if mask[k] == 1:
+                            trackmate[list_all[k] + 1, 10:11] = np.array(pred[k].detach().cpu())
+                            trackmate[list_all[k] + 1, 8:9] = trackmate[list_all[k], 8:9] + trackmate[list_all[k] + 1,10:11]
 
-            if (np.mean(mserr_list) < best_loss) & (data_id==0)  :
-                print('Save model')
-                best_loss = np.mean(mserr_list)
-                torch.save({'model_state_dict': model.state_dict(), 'optimizer_state_dict': optimizer.state_dict()}, os.path.join(log_dir, 'models', 'best_model_new.pt'))
-                rmserr_list = test_model(model_config, trackmate_list=trackmate_list, bVisu=True, bMinimization=False,frame_start=160)
+
+        if np.mean(loss_list) < best_loss:
+            best_loss = np.mean(loss_list)
+            torch.save({'model_state_dict': model.state_dict(), 'optimizer_state_dict': optimizer.state_dict()}, os.path.join(log_dir, 'models', 'best_model_new.pt'))
+            print(f"Epoch: {epoch} Loss: {np.round(np.mean(loss_list), 4)} saving model")
+        else:
+            print(f"Epoch: {epoch} Loss: {np.round(np.mean(loss_list), 4)}")
+
+        list_plot.append(np.mean(loss_list))
+
+        model.a.data = torch.clamp(model.a.data, min=-4, max=4)
+        embedding = model.a.detach().cpu().numpy()
+
+        for k in range(nDataset):
+            embedding[k] = scaler.fit_transform(embedding[k])
+
+        fig = plt.figure(figsize=(13, 8))
+        # plt.ion()
+
+        ax = fig.add_subplot(2, 3, 1)
+        plt.plot(list_plot, color='k')
+        if epoch<100:
+            plt.xlim([0, 100])
+        else:
+            plt.xlim([0, 500])
+        if list_plot[-1] < 1:
+            plt.ylim([0, 1])
+        else:
+            plt.ylim([0, 20])
+        plt.ylabel('Loss', fontsize=10)
+        plt.xlabel('Epochs', fontsize=10)
+
+        for k in range(nDataset):
+            ax = fig.add_subplot(2, 3, 4+k)
+            plt.scatter(embedding[k][:, 0], embedding[k][:, 1], s=1, color='k')
+            plt.xlabel('Embedding 0', fontsize=12)
+            plt.ylabel('Embedding 1', fontsize=12)
+            plt.xlim([-3.1, 3.1])
+            plt.ylim([-3.1, 3.1])
+
+        if (epoch % 10 == 0) & (epoch > 0):
+            best_loss = np.mean(loss_list)
+            torch.save({'model_state_dict': model.state_dict(), 'optimizer_state_dict': optimizer.state_dict()}, os.path.join(log_dir, 'models', 'best_model_new.pt'))
+            R2_list = test_model(model_config, trackmate_list=trackmate_list, bVisu=False, bMinimization=False, frame_start=160)
+            model.train()
+
+        if (epoch > 9):
+
+            ax = fig.add_subplot(2, 3, 2)
+            plt.plot(160+np.arange(len(R2_list)), R2_list, c='k')
+            plt.ylim([0, 1])
+            plt.xlabel('Frame', fontsize=12)
+            plt.ylabel('R2', fontsize=12)
+
+        plt.tight_layout()
+        plt.savefig(f"./tmp_training/Fig_{ntry}_{epoch}.tif")
+        plt.close()
+
 
     print(' end of training')
     print(' ')
@@ -1069,15 +1070,6 @@ def train_model_ResNet(model_config=None, trackmate_list=None, nstd=None, nmean=
                 torch.save({'model_state_dict': model.state_dict(), 'optimizer_state_dict': optimizer.state_dict()},
                            os.path.join(log_dir, 'models', 'best_model_new.pt'))
 
-def train_model(model_config=None, trackmate_list=None, nstd=None, nmean=None, n_tracks_list=None):
-
-    print('')
-
-    if model_config['net_type'] == 'ResNetGNN':
-        train_model_ResNet(model_config, trackmate_list, nstd, nmean, n_tracks_list)
-    else:
-        train_model_Interaction(model_config, trackmate_list, nstd, nmean, n_tracks_list)
-
 def test_model(model_config=None, trackmate_list=None, bVisu=False, bMinimization=False, frame_start=20):
 
     print('')
@@ -1554,8 +1546,10 @@ def test_model(model_config=None, trackmate_list=None, bVisu=False, bMinimizatio
 
 def load_model_config (id=505):
 
-    #505
-    model_config_test = {'ntry': 505,
+    model_config_test=[]
+
+    if id==505:
+        model_config_test = {'ntry': 505,
                     'dataset': ['2309012_490'],
                     'trackmate_metric' : {'Label': 0,
                     'Spot_ID': 1,
@@ -1611,11 +1605,8 @@ def load_model_config (id=505):
                     'train_MLPs': True,
                     'cell_embedding': 3,
                     'net_type':'InteractionParticles'}
-    if model_config_test['ntry']==id:
-        return model_config_test
-
-    #506 3 datasets
-    model_config_test = {'ntry': 506,
+    if id == 506:
+        model_config_test = {'ntry': 506,
                     'dataset': ['2309012_490', '2309012_491', '2309012_492'],
                     'trackmate_metric': {'Label': 0,
                                          'Spot_ID': 1,
@@ -1671,11 +1662,8 @@ def load_model_config (id=505):
                     'train_MLPs': True,
                     'cell_embedding': 3,
                     'net_type': 'InteractionParticles'}
-    if model_config_test['ntry']==id:
-        return model_config_test
-
-    #507
-    model_config_test = {'ntry': 507,
+    if id == 507:
+        model_config_test = {'ntry': 507,
                     'dataset': ['2309012_490'],
                     'trackmate_metric': {'Label': 0,
                                          'Spot_ID': 1,
@@ -1731,11 +1719,8 @@ def load_model_config (id=505):
                     'train_MLPs': True,
                     'cell_embedding': 8,
                     'net_type': 'InteractionParticles'}
-    if model_config_test['ntry']==id:
-        return model_config_test
-
-    #508
-    model_config_test = {'ntry': 508,
+    if id == 508:
+        model_config_test = {'ntry': 508,
                     'dataset': ['2309012_490'],
                     'trackmate_metric': {'Label': 0,
                                          'Spot_ID': 1,
@@ -1791,11 +1776,8 @@ def load_model_config (id=505):
                     'train_MLPs': True,
                     'cell_embedding': 3,
                     'net_type': 'InteractionParticles'}
-    if model_config_test['ntry']==id:
-        return model_config_test
-
-    #509
-    model_config_test = {'ntry': 509,
+    if id == 509:
+        model_config_test = {'ntry': 509,
                     'dataset': ['2309012_490'],
                     'trackmate_metric': {'Label': 0,
                                          'Spot_ID': 1,
@@ -1851,11 +1833,8 @@ def load_model_config (id=505):
                     'train_MLPs': True,
                     'cell_embedding': 3,
                     'net_type': 'InteractionParticles'}
-    if model_config_test['ntry']==id:
-        return model_config_test
-
-    #510
-    model_config_test = {'ntry': 510,
+    if id == 510:
+        model_config_test = {'ntry': 510,
                     'dataset': '2309012_490',
                     'trackmate_metric': {'Label': 0,
                                          'Spot_ID': 1,
@@ -1912,11 +1891,8 @@ def load_model_config (id=505):
                     'train_MLPs': True,
                     'cell_embedding': 3,
                     'net_type': 'ResNetGNN'}
-    if model_config_test['ntry']==id:
-        return model_config_test
-
-    #511
-    model_config_test = {'ntry': 511,
+    if id == 511:
+        model_config_test = {'ntry': 511,
                     'dataset': ['2309012_490', '2309012_491', '2309012_492'],
                     'trackmate_metric': {'Label': 0,
                                          'Spot_ID': 1,
@@ -1973,11 +1949,8 @@ def load_model_config (id=505):
                     'train_MLPs': True,
                     'cell_embedding': 3,
                     'net_type': 'ResNetGNN'}
-    if model_config_test['ntry']==id:
-        return model_config_test
-    
-    #512 new version 
-    model_config_test = {'ntry': 512,
+    if id == 512:
+        model_config_test = {'ntry': 512,
                     'dataset':  ['2309012_490'], #  ['2309012_490', '2309012_491', '2309012_492'],
                     'trackmate_metric' : {'Label': 0,
                     'Spot_ID': 1,
@@ -2039,11 +2012,8 @@ def load_model_config (id=505):
                     'batch_size':8,
                     'net_type':'InteractionParticles',
                     'training_mode': 't+1'}
-    if model_config_test['ntry']==id:
-        return model_config_test
-
-    # 513 new version
-    model_config_test = {'ntry': 513,
+    if id == 513:
+        model_config_test = {'ntry': 513,
                          'dataset': ['2309012_490'],  # ['2309012_490', '2309012_491', '2309012_492'],
                          'trackmate_metric': {'Label': 0,
                                               'Spot_ID': 1,
@@ -2106,11 +2076,8 @@ def load_model_config (id=505):
                          'batch_size': 4,
                          'net_type': 'InteractionParticles',
                          'training_mode': 't+1'}
-    if model_config_test['ntry'] == id:
-        return model_config_test
-
-    #514 new version
-    model_config_test = {'ntry': 514,
+    if id == 514:
+        model_config_test = {'ntry': 514,
                     'dataset':  ['2309012_490', '2309012_491', '2309012_492'],
                     'trackmate_metric' : {'Label': 0,
                     'Spot_ID': 1,
@@ -2172,11 +2139,8 @@ def load_model_config (id=505):
                     'batch_size':8,
                     'net_type':'InteractionParticles',
                     'training_mode': 't+1'}
-    if model_config_test['ntry']==id:
-        return model_config_test
-    
-    #515 new version
-    model_config_test = {'ntry': 515,
+    if id == 515:
+        model_config_test = {'ntry': 515,
                     'dataset':  ['2309012_490', '2309012_491', '2309012_492'],
                     'trackmate_metric' : {'Label': 0,
                     'Spot_ID': 1,
@@ -2238,11 +2202,8 @@ def load_model_config (id=505):
                     'batch_size':8,
                     'net_type':'InteractionParticles',
                     'training_mode': 't+1'}
-    if model_config_test['ntry']==id:
-        return model_config_test
-
-    #516 new version
-    model_config_test = {'ntry': 512,
+    if id == 516:
+        model_config_test = {'ntry': 512,
                     'dataset':  ['2309012_490'], #  ['2309012_490', '2309012_491', '2309012_492'],
                     'trackmate_metric' : {'Label': 0,
                     'Spot_ID': 1,
@@ -2304,11 +2265,8 @@ def load_model_config (id=505):
                     'batch_size':8,
                     'net_type':'InteractionParticles',
                     'training_mode': 't+1'}
-    if model_config_test['ntry']==id:
-        return model_config_test
-
-    #517 new version
-    model_config_test = {'ntry': 513,
+    if id == 517:
+        model_config_test = {'ntry': 513,
                          'dataset': ['2309012_490'],  # ['2309012_490', '2309012_491', '2309012_492'],
                          'trackmate_metric': {'Label': 0,
                                               'Spot_ID': 1,
@@ -2370,11 +2328,8 @@ def load_model_config (id=505):
                          'batch_size': 8,
                          'net_type': 'InteractionParticles',
                          'training_mode': 't+1'}
-    if model_config_test['ntry'] == id:
-        return model_config_test
-
-    #518 new version
-    model_config_test = {'ntry': 518,
+    if id == 518:
+        model_config_test = {'ntry': 518,
                     'dataset':  ['2309012_490'], #  ['2309012_490', '2309012_491', '2309012_492'],
                     'trackmate_metric' : {'Label': 0,
                     'Spot_ID': 1,
@@ -2436,10 +2391,71 @@ def load_model_config (id=505):
                     'batch_size':8,
                     'net_type':'InteractionParticles',
                     'training_mode': 't+1'}
-    if model_config_test['ntry']==id:
-        return model_config_test
+    if id == 519:
+        model_config_test = {'ntry': 519,
+                    'dataset':  ['2309012_490'], #  ['2309012_490', '2309012_491', '2309012_492'],
+                    'trackmate_metric' : {'Label': 0,
+                    'Spot_ID': 1,
+                    'Track_ID': 2,
+                    'Quality': 3,
+                    'X': 4,
+                    'Y': 5,
+                    'Z': 6,
+                    'T': 7,
+                    'Frame': 8,
+                    'R': 9,
+                    'Visibility': 10,
+                    'Spot color': 11,
+                    'Mean Ch1': 12,
+                    'Median Ch1': 13,
+                    'Min Ch1': 14,
+                    'Max Ch1': 15,
+                    'Sum Ch1': 16,
+                    'Std Ch1': 17,
+                    'Ctrst Ch1': 18,
+                    'SNR Ch1': 19,
+                    'El. x0': 20,
+                    'El. y0': 21,
+                    'El. long axis': 22,
+                    'El. sh. axis': 23,
+                    'El. angle': 24,
+                    'El. a.r.': 25,
+                    'Area': 26,
+                    'Perim.': 27,
+                    'Circ.': 28,
+                    'Solidity': 29,
+                    'Shape index': 30},
+                    'metric_list' : ['Frame', 'Track_ID', 'X', 'Y', 'Mean Ch1', 'Area'],
+                    'file_folder' : '/home/allierc@hhmi.org/Desktop/signaling/HGF-ERK signaling/fig 1/B_E/210105/trackmate/',
+                    'dx':0.908,
+                    'dt':5.0,
+                    'upgrade_type': 0,
+                    'msg': 2,
+                    'aggr': 0,
+                    'rot_mode':1,
+                    'time_embedding': False,
+                    'n_mp_layers0': 5,
+                    'hidden_size0': 128,
+                    'output_size0': 16,
+                    'n_mp_layers1':2,
+                    'hidden_size1': 16,
+                    'n_mp_layers': 5,
+                    'hidden_size': 128,
+                    'bNoise': False,
+                    'noise_level': 0,
+                    'rollout_window': 2,
+                    'frame_start': 20,
+                    'frame_end': [200],   #   [200, 182, 182],  # [241,228,228],
+                    'n_tracks': 0,
+                    'radius': 0.15,
+                    'remove_update_U': True,
+                    'train_MLPs': True,
+                    'cell_embedding': 2,
+                    'batch_size':8,
+                    'net_type':'InteractionParticles',
+                    'training_mode': 'regressive'}
 
-    print('watch out model_config not find')
+    # print('watch out model_config not find')
     return model_config_test
 
 
@@ -2454,7 +2470,7 @@ if __name__ == "__main__":
     scaler = StandardScaler()
     S_e = SamplesLoss(loss="sinkhorn", p=2, blur=.05)
 
-    for gtest in range(518,519):
+    for gtest in range(518,520):
 
         model_config = load_model_config(id=gtest)
         for key, value in model_config.items():
@@ -2474,8 +2490,9 @@ if __name__ == "__main__":
             print('embedding: a true t true')
 
         trackmate_list, nstd, nmean, n_tracks_list = load_trackmate(model_config)
-        train_model(model_config, trackmate_list, nstd, nmean, n_tracks_list)
+        train_model_Interaction(model_config, trackmate_list, nstd, nmean, n_tracks_list)
         # R2_list = test_model(model_config, trackmate_list=trackmate_list, bVisu=True, bMinimization=False, frame_start=20)
+        # train_model_ResNet(model_config, trackmate_list, nstd, nmean, n_tracks_list)
 
 
 
