@@ -43,6 +43,7 @@ def load_trackmate(model_config):
     trackmate[-1, 0] = -1
     nstd = np.load(f'./graphs_data/graphs_cells_{folder}/nstd.npy')
     nmean = np.load(f'./graphs_data/graphs_cells_{folder}/nmean.npy')
+
     c0 = nstd[4] / nstd[2] * dt
     c1 = nstd[6] / nstd[4]
     print('done ...')
@@ -63,11 +64,12 @@ def load_trackmate(model_config):
                 print(f'Pb check vx at row {k}')
             if np.abs(trackmate[k + 1, 5] * c0 - (trackmate[k + 1, 3] - trackmate[k, 3])) > 1E-3:
                 print(f'Pb check vy at row {k}')
-
             if np.abs(trackmate[k + 1, 6] * c1 - (trackmate[k + 1, 4] - trackmate[k, 4])) > 1E-3:
                 print(f'Pb check accx at row {k}')
             if np.abs(trackmate[k + 1, 7] * c1 - (trackmate[k + 1, 5] - trackmate[k, 5])) > 1E-3:
                 print(f'Pb check accy at row {k}')
+            if np.abs(trackmate[k + 1, 10] - (trackmate[k + 1, 8] - trackmate[k, 8])) >1E-3:
+                print(f'Pb check ERK at row {k}')
 
     print('... done')
 
@@ -279,9 +281,12 @@ class InteractionParticles(pyg.nn.MessagePassing):
         # self.t = nn.Parameter(torch.tensor(np.ones((len(model_config['dataset']),int(self.n_tracks+1), 1)), requires_grad=False, device=self.device))
 
 
-    def forward(self, data, data_id):
+    def forward(self, data, data_id, step, cos_phi, sin_phi):
 
         self.data_id = data_id
+        self.step = step
+        self.cos_phi = cos_phi
+        self.sin_phi = sin_phi
 
         x, edge_index, edge_attr = data.x, data.edge_index, data.edge_attr
 
@@ -304,47 +309,38 @@ class InteractionParticles(pyg.nn.MessagePassing):
 
     def message(self, x_i, x_j,edge_attr):
 
-        cos_i = x_i[:, -2:-1]
-        sin_i = x_i[:, -1:]
-        cos_j = x_j[:, -2:-1]
-        sin_j = x_j[:, -1:]
-
-        xi=x_i[:, 2:3]
-        yi=x_i[:, 3:4]
-        xj=x_j[:, 2:3]
-        yj=x_j[:, 3:4]
-        vxi=x_i[:, 4:5]
-        vyi=x_i[:, 5:6]
-        vxj=x_j[:, 4:5]
-        vyj=x_j[:, 5:6]
+        delta_pos = x_j[:, 2:4] - x_i[:, 2:4]
+        x_i_vx = x_i[:, 4:5] 
+        x_i_vy = x_i[:, 5:6] 
+        x_j_vx = x_j[:, 4:5] 
+        x_j_vy = x_j[:, 5:6] 
 
         diff_erk = x_j[:, 8:9] - x_i[:, 8:9]
         erk_j = x_j[:, 8:9]
 
-        if self.rot_mode == 0:
-            x_jp = xj - xi
-            y_jp = yj - yi
-            vx_p = vxj - vxi
-            vy_p = vyj - vyi
+        if (self.rot_mode == 1) & (self.step == 1):
 
-        if self.rot_mode == 1:
-            x_jp = (xj - xi) * cos_i + (yj - yi) * sin_i
-            y_jp = -(xj - xi) * sin_i + (yj - yi) * cos_i
-
-            vx_ip = vxi * cos_i + vyi * sin_i
-            vy_ip = -vxi * sin_i + vyi * cos_i
-
-            vx_jp = vxj * cos_i + vyj * sin_i
-            vy_jp = -vxj * sin_i + vyj * cos_i
+            new_x = self.cos_phi * delta_pos[:,0] + self.sin_phi * delta_pos[:,1]
+            new_y = -self.sin_phi * delta_pos[:,0] + self.cos_phi * delta_pos[:,1]
+            delta_pos[:,0] = new_x
+            delta_pos[:,1] = new_y
+            new_vx = self.cos_phi * x_i_vx + self.sin_phi * x_i_vy
+            new_vy = -self.sin_phi * x_i_vx + self.cos_phi * x_i_vy
+            x_i_vx = new_vx
+            x_i_vy = new_vy
+            new_vx = self.cos_phi * x_j_vx + self.sin_phi * x_j_vy
+            new_vy = -self.sin_phi * x_j_vx + self.cos_phi * x_j_vy
+            x_j_vx = new_vx
+            x_j_vy = new_vy
 
         d = edge_attr
 
         if self.msg==0:
             return diff_erk*0
         elif self.msg==1:
-            in_features = torch.cat((d, x_jp, y_jp, vx_ip, vy_ip, vx_jp, vy_jp, diff_erk), dim=-1)
+            in_features = torch.cat((delta_pos, d, x_i_vx, x_i_vy, x_j_vx, x_j_vy, diff_erk), dim=-1)
         elif self.msg==2:
-            in_features = torch.cat((d, x_jp, y_jp, vx_ip, vy_ip, vx_jp, vy_jp, erk_j), dim=-1)
+            in_features = torch.cat((delta_pos, d, x_i_vx, x_i_vy, x_j_vx, x_j_vy, erk_j), dim=-1)
 
         out = self.lin_edge(in_features)
 
@@ -417,7 +413,7 @@ def train_model_Interaction(model_config=None, trackmate_list=None, nstd=None, n
     list_plot = []
 
 
-    for epoch in range(30):
+    for epoch in range(60):
 
         if epoch == 5:
             batch_size = model_config['batch_size']
@@ -436,16 +432,21 @@ def train_model_Interaction(model_config=None, trackmate_list=None, nstd=None, n
         loss_list = []
 
         if training_mode == 't+1':
-            for N in range(1, np.sum(model_config['frame_end']) * data_augmentation_loop // batch_size):
+            for N in tqdm(range(1, np.sum(model_config['frame_end']) * data_augmentation_loop // batch_size)):
 
                 data_id = np.random.randint(nDataset)
                 dataset_batch = []
                 mask_batch = []
+
                 for batch in range(batch_size):
 
-                    k = 1 + np.random.randint(model_config['frame_end'][data_id] - 2)
+                    phi = torch.randn(1, dtype=torch.float32, requires_grad=False, device=device) * np.pi * 2
+                    cos_phi = torch.cos(phi)
+                    sin_phi = torch.sin(phi)
 
-                    pos = np.argwhere(trackmate_list[data_id][:, 0] == k)
+                    m = 1 + np.random.randint(model_config['frame_end'][data_id] - 2)
+
+                    pos = np.argwhere(trackmate_list[data_id][:, 0] == m)
                     list_all = pos[:, 0].astype(int)
                     mask = torch.tensor(np.ones(list_all.shape[0]), device=device)
                     for k in range(len(mask)):
@@ -478,12 +479,12 @@ def train_model_Interaction(model_config=None, trackmate_list=None, nstd=None, n
                 optimizer.zero_grad()
 
                 for batch in batch_loader:
-                    pred = model(batch, data_id=data_id)
+                    pred = model(batch, data_id=data_id, step=1, cos_phi=cos_phi, sin_phi=sin_phi)
 
                 loss = ((pred - y_batch)*mask_batch).norm(2)
                 loss.backward()
                 optimizer.step()
-                loss_list.append(loss.item())
+                loss_list.append(loss.item()/batch_size)
 
         elif training_mode == 'regressive':
 
@@ -493,9 +494,16 @@ def train_model_Interaction(model_config=None, trackmate_list=None, nstd=None, n
             trackmate = trackmate_list[data_id].copy()
             trackmate_true = trackmate_list[data_id].copy()
 
-            for N in range(1,model_config['frame_end'][data_id]//regressive_step):  # frame_list:
+            for N in tqdm(range(1,model_config['frame_end'][data_id] * data_augmentation_loop //regressive_step)):  # frame_list:
 
                 m = np.random.randint(model_config['frame_end'][data_id] - 1 - regressive_step)
+
+                optimizer.zero_grad()
+                loss=0
+
+                phi = torch.randn(1, dtype=torch.float32, requires_grad=False, device=device) * np.pi * 2
+                cos_phi = torch.cos(phi)
+                sin_phi = torch.sin(phi)
 
                 for regressive_loop in range(regressive_step):
 
@@ -519,19 +527,18 @@ def train_model_Interaction(model_config=None, trackmate_list=None, nstd=None, n
                     dataset = data.Data(x=x, edge_index=edges[:, pos[:, 0]],
                                         edge_attr=torch.tensor(distance[pos[:, 0]], device=device))
 
-                    optimizer.zero_grad()
-                    pred = model(data=dataset, data_id=data_id)
+                    pred = model(data=dataset, data_id=data_id, step=1, cos_phi=cos_phi, sin_phi=sin_phi)
 
-                    loss = criteria(pred * mask, target * mask) * 3
-
-                    loss.backward()
-                    optimizer.step()
-                    loss_list.append(loss.item())
+                    loss += ((pred-target)*mask).norm(2)
 
                     for k in range(len(mask)):
                         if mask[k] == 1:
                             trackmate[list_all[k] + 1, 10:11] = np.array(pred[k].detach().cpu())
                             trackmate[list_all[k] + 1, 8:9] = trackmate[list_all[k], 8:9] + trackmate[list_all[k] + 1,10:11]
+
+                loss.backward()
+                optimizer.step()
+                loss_list.append(loss.item()/regressive_step)
 
 
         if np.mean(loss_list) < best_loss:
@@ -560,6 +567,8 @@ def train_model_Interaction(model_config=None, trackmate_list=None, nstd=None, n
             plt.xlim([0, 500])
         if list_plot[-1] < 1:
             plt.ylim([0, 1])
+        elif list_plot[-1] < 10:
+            plt.ylim([0, 10])
         else:
             plt.ylim([0, 20])
         plt.ylabel('Loss', fontsize=10)
@@ -1001,7 +1010,6 @@ def train_model_ResNet(model_config=None, trackmate_list=None, nstd=None, nmean=
         print('embedding: a true t true')
 
     optimizer = torch.optim.Adam(model.parameters(), lr=1E-3)  # , weight_decay=5e-3)
-    criteria = nn.MSELoss()
     model.train()
 
     print('Training model = ResNetGNN() ...')
@@ -1094,48 +1102,12 @@ def test_model(model_config=None, trackmate_list=None, bVisu=False, bMinimizatio
         model.load_state_dict(state_dict['model_state_dict'])
 
     if net_type == 'ResNetGNN':
-
-        print('ntry: ', model_config['ntry'])
-        if model_config['upgrade_type'] == 0:
-            print('no GRUcell ')
-        elif model_config['upgrade_type'] == 1:
-            print('with GRUcell ')
-        if (model_config['msg'] == 0) | (model_config['embedding'] > 0):
-            print('msg: 0')
-        elif model_config['msg'] == 1:
-            print('msg: MLP2(x_jp, y_jp, vx_p, vy_p, ux, uy)')
-        elif model_config['msg'] == 2:
-            print('msg: MLP2(x_jp, y_jp, vx_p, vy_p, ux, uy, diff erkj)')
-        elif model_config['msg'] == 3:
-            print('msg: MLP2(diff_erk)')
-        else:  # model_config['msg']==4:
-            print('msg: 0')
-        print('embedding: ', model_config['embedding'])
-        print('hidden_size: ', model_config['hidden_size'])
-        print('n_mp_layers: ', model_config['n_mp_layers'])
-        print('noise_level: ', model_config['noise_level'])
-        print('rollout_window: ', model_config['rollout_window'])
-        print(f'batch size: ', model_config['batch_size'])
-        print('remove_update_U: ', model_config['remove_update_U'])
-        print('train_MLPs: ', model_config['train_MLPs'])
-        print('cell_embedding: ', model_config['cell_embedding'])
-
         model = ResNetGNN(model_config=model_config, device=device)
         model.nstd = nstd
         model.nmean = nmean
         state_dict = torch.load(f"./log/try_{ntry}/models/best_model_new.pt")
         model.load_state_dict(state_dict['model_state_dict'])
 
-    table = PrettyTable(["Modules", "Parameters"])
-    total_params = 0
-    for name, parameter in model.named_parameters():
-        if not parameter.requires_grad:
-            continue
-        param = parameter.numel()
-        table.add_row([name, param])
-        total_params += param
-    print(table)
-    print(f"Total Trainable Params: {total_params}")
 
     print('UMAP embedding...')
 
@@ -1219,13 +1191,7 @@ def test_model(model_config=None, trackmate_list=None, bVisu=False, bMinimizatio
         dataset = data.Data(x=x, edge_index=edges[:, pos[:, 0]],
                             edge_attr=torch.tensor(distance[pos[:, 0]], device=device))
 
-        if net_type == 'InteractionParticles':
-            pred = model(data=dataset, data_id=0)
-        else:
-            pred = model(data=dataset, data_id=0)
-
-        # pred = torch.tensor(trackmate_true[list_all + 1, 10:11], device=device)
-
+        pred = model(data=dataset, data_id=0, step=2, cos_phi=0, sin_phi=0)
 
         loss = criteria((pred[:, :] + x[:, 8:9]) * mask * nstd[8], target * mask * nstd[8])
 
@@ -2454,6 +2420,69 @@ def load_model_config (id=505):
                     'batch_size':8,
                     'net_type':'InteractionParticles',
                     'training_mode': 'regressive'}
+    if id == 520:
+        model_config_test = {'ntry': 520,
+                    'dataset':  ['2309012_490'], #  ['2309012_490', '2309012_491', '2309012_492'],
+                    'trackmate_metric' : {'Label': 0,
+                    'Spot_ID': 1,
+                    'Track_ID': 2,
+                    'Quality': 3,
+                    'X': 4,
+                    'Y': 5,
+                    'Z': 6,
+                    'T': 7,
+                    'Frame': 8,
+                    'R': 9,
+                    'Visibility': 10,
+                    'Spot color': 11,
+                    'Mean Ch1': 12,
+                    'Median Ch1': 13,
+                    'Min Ch1': 14,
+                    'Max Ch1': 15,
+                    'Sum Ch1': 16,
+                    'Std Ch1': 17,
+                    'Ctrst Ch1': 18,
+                    'SNR Ch1': 19,
+                    'El. x0': 20,
+                    'El. y0': 21,
+                    'El. long axis': 22,
+                    'El. sh. axis': 23,
+                    'El. angle': 24,
+                    'El. a.r.': 25,
+                    'Area': 26,
+                    'Perim.': 27,
+                    'Circ.': 28,
+                    'Solidity': 29,
+                    'Shape index': 30},
+                    'metric_list' : ['Frame', 'Track_ID', 'X', 'Y', 'Mean Ch1', 'Area'],
+                    'file_folder' : '/home/allierc@hhmi.org/Desktop/signaling/HGF-ERK signaling/fig 1/B_E/210105/trackmate/',
+                    'dx':0.908,
+                    'dt':5.0,
+                    'upgrade_type': 0,
+                    'msg': 2,
+                    'aggr': 0,
+                    'rot_mode':1,
+                    'time_embedding': False,
+                    'n_mp_layers0': 5,
+                    'hidden_size0': 64,
+                    'output_size0': 16,
+                    'n_mp_layers1':2,
+                    'hidden_size1': 16,
+                    'n_mp_layers': 5,
+                    'hidden_size': 128,
+                    'bNoise': False,
+                    'noise_level': 0,
+                    'rollout_window': 2,
+                    'frame_start': 20,
+                    'frame_end': [200],   #   [200, 182, 182],  # [241,228,228],
+                    'n_tracks': 0,
+                    'radius': 0.15,
+                    'remove_update_U': True,
+                    'train_MLPs': True,
+                    'cell_embedding': 2,
+                    'batch_size':8,
+                    'net_type':'InteractionParticles',
+                    'training_mode': 't+1'}
 
     # print('watch out model_config not find')
     return model_config_test
@@ -2470,7 +2499,7 @@ if __name__ == "__main__":
     scaler = StandardScaler()
     S_e = SamplesLoss(loss="sinkhorn", p=2, blur=.05)
 
-    for gtest in range(518,520):
+    for gtest in range(518,521,2):
 
         model_config = load_model_config(id=gtest)
         for key, value in model_config.items():
