@@ -433,7 +433,7 @@ def train_model_Interaction(model_config=None, trackmate_list=None, nstd=None, n
         loss_list = []
 
         if training_mode == 't+1':
-            for N in tqdm(range(1, np.sum(model_config['frame_end']) * data_augmentation_loop // batch_size)):
+            for N in range(1, np.sum(model_config['frame_end']) * data_augmentation_loop // batch_size):
 
                 data_id = np.random.randint(nDataset)
                 dataset_batch = []
@@ -463,6 +463,9 @@ def train_model_Interaction(model_config=None, trackmate_list=None, nstd=None, n
                     if time_window>0:
                         for k in range(time_window):
                             x=torch.cat((x,torch.tensor(trackmate_list[data_id][list_all-k, 8:9], device=device)),axis=-1)
+                    if model_config['noise_level'] > 0:
+                        noise_current = torch.randn((x.shape[0], 2), device=device) * model_config['noise_level']
+                        x[:,2:4] = x[:,2:4] + noise_current
 
                     dataset = data.Data(x=x, pos=x[:, 2:4])
                     transform = T.Compose([T.Delaunay(), T.FaceToEdge(), T.Distance(norm=False)])
@@ -493,13 +496,13 @@ def train_model_Interaction(model_config=None, trackmate_list=None, nstd=None, n
 
         elif training_mode == 'regressive':
 
-            regressive_step = 5
+            regressive_step = 2
 
             data_id = np.random.randint(nDataset)
             trackmate = trackmate_list[data_id].copy()
             trackmate_true = trackmate_list[data_id].copy()
 
-            for N in tqdm(range(1,model_config['frame_end'][data_id] * data_augmentation_loop //regressive_step)):  # frame_list:
+            for N in range(1,model_config['frame_end'][data_id] * data_augmentation_loop //regressive_step):  # frame_list:
 
                 m = 2 + time_window + np.random.randint(model_config['frame_end'][data_id] - - 1 - regressive_step)
 
@@ -1560,7 +1563,6 @@ def load_model_config (id=505):
                     'time_embedding': False,
                     'n_mp_layers': 5,
                     'hidden_size': 128,
-                    'bNoise': False,
                     'noise_level': 0,
                     'batch_size': 4,
                     'time_window': 0,
@@ -1617,7 +1619,6 @@ def load_model_config (id=505):
                     'time_embedding': False,
                     'n_mp_layers': 5,
                     'hidden_size': 128,
-                    'bNoise': False,
                     'noise_level': 0,
                     'batch_size': 4,
                     'time_window': 0,
@@ -1674,7 +1675,6 @@ def load_model_config (id=505):
                     'time_embedding': False,
                     'n_mp_layers': 5,
                     'hidden_size': 128,
-                    'bNoise': False,
                     'noise_level': 0,
                     'batch_size': 4,
                     'time_window': 0,
@@ -1731,7 +1731,6 @@ def load_model_config (id=505):
                     'time_embedding': False,
                     'n_mp_layers': 5,
                     'hidden_size': 128,
-                    'bNoise': False,
                     'noise_level': 0,
                     'batch_size': 4,
                     'time_window': 0,
@@ -1788,7 +1787,6 @@ def load_model_config (id=505):
                     'time_embedding': False,
                     'n_mp_layers': 5,
                     'hidden_size': 128,
-                    'bNoise': False,
                     'noise_level': 0,
                     'batch_size': 4,
                     'time_window': 0,
@@ -1846,7 +1844,6 @@ def load_model_config (id=505):
                     'time_embedding': False,
                     'n_mp_layers': 5,
                     'hidden_size': 32,
-                    'bNoise': False,
                     'noise_level': 0,
                     'batch_size': 8,
                     'time_window': 0,
@@ -1904,7 +1901,6 @@ def load_model_config (id=505):
                     'time_embedding': False,
                     'n_mp_layers': 5,
                     'hidden_size': 32,
-                    'bNoise': False,
                     'noise_level': 0,
                     'batch_size': 8,
                     'time_window': 0,
@@ -1966,7 +1962,6 @@ def load_model_config (id=505):
                     'hidden_size1': 16,
                     'n_mp_layers': 5,
                     'hidden_size': 128,
-                    'bNoise': False,
                     'noise_level': 0,
                     'time_window': 0,
                     'frame_start': 20,
@@ -2093,7 +2088,6 @@ def load_model_config (id=505):
                     'hidden_size1': 16,
                     'n_mp_layers': 5,
                     'hidden_size': 128,
-                    'bNoise': False,
                     'noise_level': 0,
                     'time_window': 0,
                     'frame_start': 20,
@@ -2156,7 +2150,6 @@ def load_model_config (id=505):
                     'hidden_size1': 16,
                     'n_mp_layers': 5,
                     'hidden_size': 128,
-                    'bNoise': False,
                     'noise_level': 0,
                     'time_window': 0,
                     'frame_start': 20,
@@ -2219,7 +2212,6 @@ def load_model_config (id=505):
                     'hidden_size1': 16,
                     'n_mp_layers': 5,
                     'hidden_size': 128,
-                    'bNoise': False,
                     'noise_level': 0,
                     'time_window': 0,
                     'frame_start': 20,
@@ -2344,7 +2336,6 @@ def load_model_config (id=505):
                     'n_mp_layers1':2,
                     'hidden_size1': 16,
                     'n_mp_layers': 5,
-                    'bNoise': False,
                     'noise_level': 0,
                     'time_window': 0,
                     'frame_start': 20,
@@ -2407,7 +2398,6 @@ def load_model_config (id=505):
                     'hidden_size1': 16,
                     'n_mp_layers': 5,
                     'hidden_size': 128,
-                    'bNoise': False,
                     'noise_level': 0,
                     'time_window': 0,
                     'frame_start': 20,
@@ -2469,7 +2459,6 @@ def load_model_config (id=505):
                     'n_mp_layers1':2,
                     'hidden_size1': 16,
                     'n_mp_layers': 5,
-                    'bNoise': False,
                     'noise_level': 0,
                     'time_window': 0,
                     'frame_start': 20,
@@ -2530,7 +2519,6 @@ def load_model_config (id=505):
                     'output_size0': 16,
                     'n_mp_layers1': 3,
                     'hidden_size1': 16,
-                    'bNoise': False,
                     'noise_level': 0,
                     'time_window': 4,
                     'frame_start': 20,
@@ -2589,7 +2577,6 @@ def load_model_config (id=505):
                     'output_size0': 16,
                     'n_mp_layers1': 3,
                     'hidden_size1': 16,
-                    'bNoise': False,
                     'noise_level': 0,
                     'time_window': 2,
                     'frame_start': 20,
@@ -2600,7 +2587,6 @@ def load_model_config (id=505):
                     'batch_size':8,
                     'net_type':'InteractionParticles',
                     'training_mode': 't+1'}
-
     if id == 523:
         model_config_test = {'ntry': 523,
                     'dataset':  ['2309012_490'], #  ['2309012_490', '2309012_491', '2309012_492'],
@@ -2649,8 +2635,7 @@ def load_model_config (id=505):
                     'output_size0': 16,
                     'n_mp_layers1': 3,
                     'hidden_size1': 16,
-                    'bNoise': False,
-                    'noise_level': 0,
+                    'noise_level': 5E-3,
                     'time_window': 2,
                     'frame_start': 20,
                     'frame_end': [200],   #   [200, 182, 182],  # [241,228,228],
@@ -2659,7 +2644,7 @@ def load_model_config (id=505):
                     'cell_embedding': 2,
                     'batch_size':8,
                     'net_type':'InteractionParticles',
-                    'training_mode': 'regressive'}
+                    'training_mode': 't+1'}
 
     # print('watch out model_config not find')
     return model_config_test
@@ -2676,7 +2661,7 @@ if __name__ == "__main__":
     scaler = StandardScaler()
     S_e = SamplesLoss(loss="sinkhorn", p=2, blur=.05)
 
-    for gtest in range(521,524):
+    for gtest in range(519,520):
 
         model_config = load_model_config(id=gtest)
         for key, value in model_config.items():
