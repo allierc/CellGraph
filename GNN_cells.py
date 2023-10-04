@@ -268,13 +268,14 @@ class InteractionParticles(pyg.nn.MessagePassing):
 
         self.nlayers1 = model_config['n_mp_layers1']
         self.hidden_size1 = model_config['hidden_size1']
+        self.time_window = model_config['time_window']
 
         if (self.msg == 0):
             self.lin_edge = MLP(input_size=1, hidden_size=self.hidden_size0, output_size=self.output_size0, layers=self.nlayers0, device=self.device)
         if (self.msg==1) | (self.msg==2):
             self.lin_edge = MLP(input_size=8, hidden_size=self.hidden_size0, output_size=self.output_size0, layers=self.nlayers0, device=self.device)
 
-        self.lin_update = MLP(input_size=self.output_size0+self.cell_embedding+2, hidden_size=self.hidden_size1, output_size=1, layers=self.nlayers1, device=self.device)
+        self.lin_update = MLP(input_size=self.output_size0+self.cell_embedding + 2 + self.time_window, hidden_size=self.hidden_size1, output_size=1, layers=self.nlayers1, device=self.device)
 
 
         self.a = nn.Parameter(torch.tensor(np.ones((len(model_config['dataset']),int(self.n_tracks+1), self.cell_embedding)), requires_grad=True, device=self.device))
@@ -302,8 +303,7 @@ class InteractionParticles(pyg.nn.MessagePassing):
         cell_id = x[:, 1].detach().cpu().numpy()
         embedding = self.a[self.data_id,cell_id]
 
-        pred = self.lin_update(torch.cat((embedding, x[:, 8:9], message, x[:, 16:17]), axis=-1))
-
+        pred = self.lin_update(torch.cat((embedding, x[:, 8:9], message, x[:, 16:17 + self.time_window]), axis=-1))
 
         return pred
 
@@ -358,6 +358,7 @@ def train_model_Interaction(model_config=None, trackmate_list=None, nstd=None, n
     batch_size = model_config['batch_size']
     training_mode = model_config['training_mode']
     nDataset = len(model_config['dataset'])
+    time_window = model_config['time_window']
     batch_size = 1
     print(f'batchsize: {batch_size}')
     print('')
@@ -444,13 +445,13 @@ def train_model_Interaction(model_config=None, trackmate_list=None, nstd=None, n
                     cos_phi = torch.cos(phi)
                     sin_phi = torch.sin(phi)
 
-                    m = 1 + np.random.randint(model_config['frame_end'][data_id] - 2)
+                    m = 2 + time_window + np.random.randint(model_config['frame_end'][data_id] - 2)
 
                     pos = np.argwhere(trackmate_list[data_id][:, 0] == m)
                     list_all = pos[:, 0].astype(int)
                     mask = torch.tensor(np.ones(list_all.shape[0]), device=device)
                     for k in range(len(mask)):
-                        if trackmate[list_all[k] - 1, 1] != trackmate[list_all[k] + 1, 1]:
+                        if trackmate[list_all[k] - 1 - time_window, 1] != trackmate[list_all[k] + 1, 1]:
                             mask[k] = 0
                     mask = mask[:, None]
                     if batch==0:
@@ -459,6 +460,10 @@ def train_model_Interaction(model_config=None, trackmate_list=None, nstd=None, n
                         mask_batch=torch.cat((mask_batch, mask), axis=0)
 
                     x = torch.tensor(trackmate_list[data_id][list_all, 0:17], device=device)
+                    if time_window>0:
+                        for k in range(time_window):
+                            x=torch.cat((x,torch.tensor(trackmate_list[data_id][list_all-k, 8:9], device=device)),axis=-1)
+
                     dataset = data.Data(x=x, pos=x[:, 2:4])
                     transform = T.Compose([T.Delaunay(), T.FaceToEdge(), T.Distance(norm=False)])
                     dataset = transform(dataset)
@@ -496,7 +501,7 @@ def train_model_Interaction(model_config=None, trackmate_list=None, nstd=None, n
 
             for N in tqdm(range(1,model_config['frame_end'][data_id] * data_augmentation_loop //regressive_step)):  # frame_list:
 
-                m = np.random.randint(model_config['frame_end'][data_id] - 1 - regressive_step)
+                m = 2 + time_window + np.random.randint(model_config['frame_end'][data_id] - - 1 - regressive_step)
 
                 optimizer.zero_grad()
                 loss=0
@@ -511,11 +516,14 @@ def train_model_Interaction(model_config=None, trackmate_list=None, nstd=None, n
                     list_all = pos[:, 0].astype(int)
                     mask = torch.tensor(np.ones(list_all.shape[0]), device=device)
                     for k in range(len(mask)):
-                        if trackmate[list_all[k] - 1, 1] != trackmate[list_all[k] + 1, 1]:
+                        if trackmate[list_all[k] - 1 - time_window, 1] != trackmate[list_all[k] + 1, 1]:
                             mask[k] = 0
                     mask = mask[:, None]
 
                     x = torch.tensor(trackmate[list_all, 0:17], device=device)
+                    if time_window>0:
+                        for k in range(time_window):
+                            x=torch.cat((x,torch.tensor(trackmate_list[data_id][list_all-k, 8:9], device=device)),axis=-1)
                     target = torch.tensor(trackmate_true[list_all + 1, 10:11], device=device)
 
                     dataset = data.Data(x=x, pos=x[:, 2:4])
@@ -918,17 +926,6 @@ def train_model_ResNet(model_config=None, trackmate_list=None, nstd=None, nmean=
         print('msg: 0')
     output_angle = model_config['output_angle']
 
-    print('cell_embedding: ',  model_config['cell_embedding'])
-    print('embedding: ', model_config['embedding'])
-    print('hidden_size: ', model_config['hidden_size'])
-    print('n_mp_layers: ', model_config['n_mp_layers'])
-    print('noise_level: ', model_config['noise_level'])
-    print('rollout_window: ', model_config['rollout_window'])
-    print(f'batch size: ', model_config['batch_size'])
-    print('remove_update_U: ', model_config['remove_update_U'])
-    print('output_angle: ', model_config['output_angle'])
-    print('train_MLPs: ', model_config['train_MLPs'])
-
     l_dir = os.path.join('.', 'log')
     log_dir = os.path.join(l_dir, 'try_{}'.format(ntry))
     os.makedirs(log_dir, exist_ok=True)
@@ -1089,6 +1086,7 @@ def test_model(model_config=None, trackmate_list=None, bVisu=False, bMinimizatio
     metric_list = model_config['metric_list']
     frame_end = model_config['frame_end']
     net_type = model_config['net_type']
+    time_window = model_config['time_window']
 
     model_lin = LinearRegression()
 
@@ -1169,7 +1167,7 @@ def test_model(model_config=None, trackmate_list=None, bVisu=False, bMinimizatio
         list_all = pos[:, 0].astype(int)
         mask = torch.tensor(np.ones(list_all.shape[0]), device=device)
         for k in range(len(mask)):
-            if trackmate[list_all[k] - 1, 1] != trackmate[list_all[k] + 1, 1]:
+            if trackmate[list_all[k] - time_window, 1] != trackmate[list_all[k] + 1, 1]:
                 mask[k] = 0
             if torch.sum(model.a[0, trackmate[list_all[k], 1].astype(int), :]) == model_config['cell_embedding']:
                 mask[k] = 0
@@ -1178,6 +1176,9 @@ def test_model(model_config=None, trackmate_list=None, bVisu=False, bMinimizatio
         mask = mask[:, None]
 
         x = torch.tensor(trackmate[list_all, 0:17], device=device)
+        if time_window > 0:
+            for k in range(time_window):
+                x = torch.cat((x, torch.tensor(trackmate_list[data_id][list_all - k, 8:9], device=device)), axis=-1)
 
         target = torch.tensor(trackmate_true[list_all + 1, 8:9], device=device)
         target_pos = torch.tensor(trackmate_true[list_all, 2:4], device=device)
@@ -1562,7 +1563,7 @@ def load_model_config (id=505):
                     'bNoise': False,
                     'noise_level': 0,
                     'batch_size': 4,
-                    'rollout_window': 2,
+                    'time_window': 0,
                     'frame_start': 20,
                     'frame_end': [200], # [241,228,228],
                     'n_tracks': 0,
@@ -1619,7 +1620,7 @@ def load_model_config (id=505):
                     'bNoise': False,
                     'noise_level': 0,
                     'batch_size': 4,
-                    'rollout_window': 2,
+                    'time_window': 0,
                     'frame_start': 20,
                     'frame_end': [200, 182, 182],  # [241,228,228],
                     'n_tracks': 0,
@@ -1676,7 +1677,7 @@ def load_model_config (id=505):
                     'bNoise': False,
                     'noise_level': 0,
                     'batch_size': 4,
-                    'rollout_window': 2,
+                    'time_window': 0,
                     'frame_start': 20,
                     'frame_end': [200],  # [241,228,228],
                     'n_tracks': 0,
@@ -1733,7 +1734,7 @@ def load_model_config (id=505):
                     'bNoise': False,
                     'noise_level': 0,
                     'batch_size': 4,
-                    'rollout_window': 2,
+                    'time_window': 0,
                     'frame_start': 20,
                     'frame_end': [200],  # [241,228,228],
                     'n_tracks': 0,
@@ -1790,7 +1791,7 @@ def load_model_config (id=505):
                     'bNoise': False,
                     'noise_level': 0,
                     'batch_size': 4,
-                    'rollout_window': 2,
+                    'time_window': 0,
                     'frame_start': 20,
                     'frame_end': [200],  # [241,228,228],
                     'n_tracks': 0,
@@ -1848,7 +1849,7 @@ def load_model_config (id=505):
                     'bNoise': False,
                     'noise_level': 0,
                     'batch_size': 8,
-                    'rollout_window': 2,
+                    'time_window': 0,
                     'frame_start': 20,
                     'frame_end': [200],  # [241,228,228],
                     'n_tracks': 0,
@@ -1906,7 +1907,7 @@ def load_model_config (id=505):
                     'bNoise': False,
                     'noise_level': 0,
                     'batch_size': 8,
-                    'rollout_window': 2,
+                    'time_window': 0,
                     'frame_start': 20,
                     'frame_end': [200, 182, 182],  # [241,228,228],
                     'n_tracks': 0,
@@ -1967,7 +1968,7 @@ def load_model_config (id=505):
                     'hidden_size': 128,
                     'bNoise': False,
                     'noise_level': 0,
-                    'rollout_window': 2,
+                    'time_window': 0,
                     'frame_start': 20,
                     'frame_end': [200],   #   [200, 182, 182],  # [241,228,228],
                     'n_tracks': 0,
@@ -2031,7 +2032,7 @@ def load_model_config (id=505):
                          'bNoise': False,
                          'noise_level': 0,
                          'batch_size': 4,
-                         'rollout_window': 2,
+                         'time_window': 0,
                          'frame_start': 20,
                          'frame_end': [200],  # [200, 182, 182],  # [241,228,228],
                          'n_tracks': 0,
@@ -2094,7 +2095,7 @@ def load_model_config (id=505):
                     'hidden_size': 128,
                     'bNoise': False,
                     'noise_level': 0,
-                    'rollout_window': 2,
+                    'time_window': 0,
                     'frame_start': 20,
                     'frame_end': [200, 182, 182],  # [241,228,228],
                     'n_tracks': 0,
@@ -2157,7 +2158,7 @@ def load_model_config (id=505):
                     'hidden_size': 128,
                     'bNoise': False,
                     'noise_level': 0,
-                    'rollout_window': 2,
+                    'time_window': 0,
                     'frame_start': 20,
                     'frame_end': [200, 182, 182],  # [241,228,228],
                     'n_tracks': 0,
@@ -2220,7 +2221,7 @@ def load_model_config (id=505):
                     'hidden_size': 128,
                     'bNoise': False,
                     'noise_level': 0,
-                    'rollout_window': 2,
+                    'time_window': 0,
                     'frame_start': 20,
                     'frame_end': [200],   #   [200, 182, 182],  # [241,228,228],
                     'n_tracks': 0,
@@ -2283,7 +2284,7 @@ def load_model_config (id=505):
                          'hidden_size': 128,
                          'bNoise': False,
                          'noise_level': 0,
-                         'rollout_window': 2,
+                         'time_window': 0,
                          'frame_start': 20,
                          'frame_end': [200],  # [200, 182, 182],  # [241,228,228],
                          'n_tracks': 0,
@@ -2343,10 +2344,9 @@ def load_model_config (id=505):
                     'n_mp_layers1':2,
                     'hidden_size1': 16,
                     'n_mp_layers': 5,
-                    'hidden_size': 128,
                     'bNoise': False,
                     'noise_level': 0,
-                    'rollout_window': 2,
+                    'time_window': 0,
                     'frame_start': 20,
                     'frame_end': [200],   #   [200, 182, 182],  # [241,228,228],
                     'n_tracks': 0,
@@ -2409,7 +2409,7 @@ def load_model_config (id=505):
                     'hidden_size': 128,
                     'bNoise': False,
                     'noise_level': 0,
-                    'rollout_window': 2,
+                    'time_window': 0,
                     'frame_start': 20,
                     'frame_end': [200],   #   [200, 182, 182],  # [241,228,228],
                     'n_tracks': 0,
@@ -2469,10 +2469,9 @@ def load_model_config (id=505):
                     'n_mp_layers1':2,
                     'hidden_size1': 16,
                     'n_mp_layers': 5,
-                    'hidden_size': 128,
                     'bNoise': False,
                     'noise_level': 0,
-                    'rollout_window': 2,
+                    'time_window': 0,
                     'frame_start': 20,
                     'frame_end': [200],   #   [200, 182, 182],  # [241,228,228],
                     'n_tracks': 0,
@@ -2483,6 +2482,184 @@ def load_model_config (id=505):
                     'batch_size':8,
                     'net_type':'InteractionParticles',
                     'training_mode': 't+1'}
+    if id == 521:
+        model_config_test = {'ntry': 521,
+                    'dataset':  ['2309012_490'], #  ['2309012_490', '2309012_491', '2309012_492'],
+                    'trackmate_metric' : {'Label': 0,
+                    'Spot_ID': 1,
+                    'Track_ID': 2,
+                    'Quality': 3,
+                    'X': 4,
+                    'Y': 5,
+                    'Z': 6,
+                    'T': 7,
+                    'Frame': 8,
+                    'R': 9,
+                    'Visibility': 10,
+                    'Spot color': 11,
+                    'Mean Ch1': 12,
+                    'Median Ch1': 13,
+                    'Min Ch1': 14,
+                    'Max Ch1': 15,
+                    'Sum Ch1': 16,
+                    'Std Ch1': 17,
+                    'Ctrst Ch1': 18,
+                    'SNR Ch1': 19,
+                    'El. x0': 20,
+                    'El. y0': 21,
+                    'El. long axis': 22,
+                    'El. sh. axis': 23,
+                    'El. angle': 24,
+                    'El. a.r.': 25,
+                    'Area': 26,
+                    'Perim.': 27,
+                    'Circ.': 28,
+                    'Solidity': 29,
+                    'Shape index': 30},
+                    'metric_list' : ['Frame', 'Track_ID', 'X', 'Y', 'Mean Ch1', 'Area'],
+                    'file_folder' : '/home/allierc@hhmi.org/Desktop/signaling/HGF-ERK signaling/fig 1/B_E/210105/trackmate/',
+                    'dx':0.908,
+                    'dt':5.0,
+                    'upgrade_type': 0,
+                    'msg': 2,
+                    'aggr': 0,
+                    'rot_mode':1,
+                    'time_embedding': False,
+                    'n_mp_layers0': 5,
+                    'hidden_size0': 64,
+                    'output_size0': 16,
+                    'n_mp_layers1': 3,
+                    'hidden_size1': 16,
+                    'bNoise': False,
+                    'noise_level': 0,
+                    'time_window': 4,
+                    'frame_start': 20,
+                    'frame_end': [200],   #   [200, 182, 182],  # [241,228,228],
+                    'n_tracks': 0,
+                    'radius': 0.15,
+                    'cell_embedding': 2,
+                    'batch_size':8,
+                    'net_type':'InteractionParticles',
+                    'training_mode': 't+1'}
+    if id == 522:
+        model_config_test = {'ntry': 522,
+                    'dataset':  ['2309012_490'], #  ['2309012_490', '2309012_491', '2309012_492'],
+                    'trackmate_metric' : {'Label': 0,
+                    'Spot_ID': 1,
+                    'Track_ID': 2,
+                    'Quality': 3,
+                    'X': 4,
+                    'Y': 5,
+                    'Z': 6,
+                    'T': 7,
+                    'Frame': 8,
+                    'R': 9,
+                    'Visibility': 10,
+                    'Spot color': 11,
+                    'Mean Ch1': 12,
+                    'Median Ch1': 13,
+                    'Min Ch1': 14,
+                    'Max Ch1': 15,
+                    'Sum Ch1': 16,
+                    'Std Ch1': 17,
+                    'Ctrst Ch1': 18,
+                    'SNR Ch1': 19,
+                    'El. x0': 20,
+                    'El. y0': 21,
+                    'El. long axis': 22,
+                    'El. sh. axis': 23,
+                    'El. angle': 24,
+                    'El. a.r.': 25,
+                    'Area': 26,
+                    'Perim.': 27,
+                    'Circ.': 28,
+                    'Solidity': 29,
+                    'Shape index': 30},
+                    'metric_list' : ['Frame', 'Track_ID', 'X', 'Y', 'Mean Ch1', 'Area'],
+                    'file_folder' : '/home/allierc@hhmi.org/Desktop/signaling/HGF-ERK signaling/fig 1/B_E/210105/trackmate/',
+                    'dx':0.908,
+                    'dt':5.0,
+                    'upgrade_type': 0,
+                    'msg': 2,
+                    'aggr': 0,
+                    'rot_mode':1,
+                    'time_embedding': False,
+                    'n_mp_layers0': 5,
+                    'hidden_size0': 64,
+                    'output_size0': 16,
+                    'n_mp_layers1': 3,
+                    'hidden_size1': 16,
+                    'bNoise': False,
+                    'noise_level': 0,
+                    'time_window': 2,
+                    'frame_start': 20,
+                    'frame_end': [200],   #   [200, 182, 182],  # [241,228,228],
+                    'n_tracks': 0,
+                    'radius': 0.15,
+                    'cell_embedding': 2,
+                    'batch_size':8,
+                    'net_type':'InteractionParticles',
+                    'training_mode': 't+1'}
+
+    if id == 523:
+        model_config_test = {'ntry': 523,
+                    'dataset':  ['2309012_490'], #  ['2309012_490', '2309012_491', '2309012_492'],
+                    'trackmate_metric' : {'Label': 0,
+                    'Spot_ID': 1,
+                    'Track_ID': 2,
+                    'Quality': 3,
+                    'X': 4,
+                    'Y': 5,
+                    'Z': 6,
+                    'T': 7,
+                    'Frame': 8,
+                    'R': 9,
+                    'Visibility': 10,
+                    'Spot color': 11,
+                    'Mean Ch1': 12,
+                    'Median Ch1': 13,
+                    'Min Ch1': 14,
+                    'Max Ch1': 15,
+                    'Sum Ch1': 16,
+                    'Std Ch1': 17,
+                    'Ctrst Ch1': 18,
+                    'SNR Ch1': 19,
+                    'El. x0': 20,
+                    'El. y0': 21,
+                    'El. long axis': 22,
+                    'El. sh. axis': 23,
+                    'El. angle': 24,
+                    'El. a.r.': 25,
+                    'Area': 26,
+                    'Perim.': 27,
+                    'Circ.': 28,
+                    'Solidity': 29,
+                    'Shape index': 30},
+                    'metric_list' : ['Frame', 'Track_ID', 'X', 'Y', 'Mean Ch1', 'Area'],
+                    'file_folder' : '/home/allierc@hhmi.org/Desktop/signaling/HGF-ERK signaling/fig 1/B_E/210105/trackmate/',
+                    'dx':0.908,
+                    'dt':5.0,
+                    'upgrade_type': 0,
+                    'msg': 2,
+                    'aggr': 0,
+                    'rot_mode':1,
+                    'time_embedding': False,
+                    'n_mp_layers0': 5,
+                    'hidden_size0': 64,
+                    'output_size0': 16,
+                    'n_mp_layers1': 3,
+                    'hidden_size1': 16,
+                    'bNoise': False,
+                    'noise_level': 0,
+                    'time_window': 2,
+                    'frame_start': 20,
+                    'frame_end': [200],   #   [200, 182, 182],  # [241,228,228],
+                    'n_tracks': 0,
+                    'radius': 0.15,
+                    'cell_embedding': 2,
+                    'batch_size':8,
+                    'net_type':'InteractionParticles',
+                    'training_mode': 'regressive'}
 
     # print('watch out model_config not find')
     return model_config_test
@@ -2499,7 +2676,7 @@ if __name__ == "__main__":
     scaler = StandardScaler()
     S_e = SamplesLoss(loss="sinkhorn", p=2, blur=.05)
 
-    for gtest in range(518,521,2):
+    for gtest in range(521,524):
 
         model_config = load_model_config(id=gtest)
         for key, value in model_config.items():
