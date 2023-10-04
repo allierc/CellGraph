@@ -269,10 +269,8 @@ class InteractionParticles(pyg.nn.MessagePassing):
 
         if (self.msg == 0):
             self.lin_edge = MLP(input_size=1, hidden_size=self.hidden_size0, output_size=self.output_size0, layers=self.nlayers0, device=self.device)
-        if (self.msg==1):
+        if (self.msg==1) | (self.msg==2):
             self.lin_edge = MLP(input_size=8, hidden_size=self.hidden_size0, output_size=self.output_size0, layers=self.nlayers0, device=self.device)
-        if (self.msg==2):
-            self.lin_edge = MLP(input_size=7, hidden_size=self.hidden_size0, output_size=self.output_size0, layers=self.nlayers0, device=self.device)
 
         self.lin_update = MLP(input_size=self.output_size0+self.cell_embedding+2, hidden_size=self.hidden_size1, output_size=1, layers=self.nlayers1, device=self.device)
 
@@ -321,6 +319,7 @@ class InteractionParticles(pyg.nn.MessagePassing):
         vyj=x_j[:, 5:6]
 
         diff_erk = x_j[:, 8:9] - x_i[:, 8:9]
+        erk_j = x_j[:, 8:9]
 
         if self.rot_mode == 0:
             x_jp = xj - xi
@@ -338,16 +337,14 @@ class InteractionParticles(pyg.nn.MessagePassing):
             vx_jp = vxj * cos_i + vyj * sin_i
             vy_jp = -vxj * sin_i + vyj * cos_i
 
-        cell_id=x_i[:, 1].detach().cpu().numpy()
-
-        d = torch.clamp(edge_attr,min=0.01)
+        d = edge_attr
 
         if self.msg==0:
             return diff_erk*0
         elif self.msg==1:
             in_features = torch.cat((d, x_jp, y_jp, vx_ip, vy_ip, vx_jp, vy_jp, diff_erk), dim=-1)
         elif self.msg==2:
-            in_features = torch.cat((x_jp, y_jp, x_ip, vy_ip, vx_jp, vy_jp), dim=-1)
+            in_features = torch.cat((d, x_jp, y_jp, vx_ip, vy_ip, vx_jp, vy_jp, erk_j), dim=-1)
 
         out = self.lin_edge(in_features)
 
@@ -365,6 +362,8 @@ def train_model_Interaction(model_config=None, trackmate_list=None, nstd=None, n
     batch_size = model_config['batch_size']
     training_mode = model_config['training_mode']
     nDataset = len(model_config['dataset'])
+    batch_size = 1
+    print(f'batchsize: {batch_size}')
     print('')
 
     l_dir = os.path.join('.', 'log')
@@ -480,7 +479,14 @@ def train_model_Interaction(model_config=None, trackmate_list=None, nstd=None, n
                 optimizer.step()
                 loss_list.append(loss.item())
 
-            if (np.mean(loss_list) < best_loss):
+            if epoch == 5:
+                batch_size = model_config['batch_size']
+                print(f'batchsize: {batch_size}')
+
+            if epoch%5==0:
+                torch.save({'model_state_dict': model.state_dict(), 'optimizer_state_dict': optimizer.state_dict()},f'{log_dir}/models/model_new_{epoch}.pt')
+
+            if np.mean(loss_list) < best_loss:
                 best_loss = np.mean(loss_list)
                 torch.save({'model_state_dict': model.state_dict(), 'optimizer_state_dict': optimizer.state_dict()}, os.path.join(log_dir, 'models', 'best_model_new.pt'))
                 print(f"Epoch: {epoch} Loss: {np.round(np.mean(loss_list), 4)} saving model")
@@ -491,7 +497,6 @@ def train_model_Interaction(model_config=None, trackmate_list=None, nstd=None, n
 
             model.a.data = torch.clamp(model.a.data, min=-4, max=4)
             embedding = model.a.detach().cpu().numpy()
-
 
             for k in range(nDataset):
                 embedding[k] = scaler.fit_transform(embedding[k])
@@ -508,7 +513,7 @@ def train_model_Interaction(model_config=None, trackmate_list=None, nstd=None, n
             if list_plot[-1] < 1:
                 plt.ylim([0, 1])
             else:
-                plt.ylim([0, 12])
+                plt.ylim([0, 20])
             plt.ylabel('Loss', fontsize=10)
             plt.xlabel('Epochs', fontsize=10)
 
@@ -1067,24 +1072,8 @@ def train_model_ResNet(model_config=None, trackmate_list=None, nstd=None, nmean=
 def train_model(model_config=None, trackmate_list=None, nstd=None, nmean=None, n_tracks_list=None):
 
     print('')
-    ntry = model_config['ntry']
-    print(f'ntry: {ntry}')
-    dataset = model_config['dataset']
-    print(f'dataset: {dataset}')
-    file_folder = model_config['file_folder']
-    print(f'file_folder: {file_folder}')
-    dx = model_config['dx']
-    print(f'dx: {dx} microns')
-    dt = model_config['dt']
-    print(f'dt: {dt} minutes')
-    metric_list = model_config['metric_list']
-    print(f'metric_list: {metric_list}')
-    frame_end = model_config['frame_end']
-    print(f'frame_end: {frame_end}')
-    net_type = model_config['net_type']
-    print(f'net_type: {net_type}')
 
-    if net_type == 'ResNetGNN':
+    if model_config['net_type'] == 'ResNetGNN':
         train_model_ResNet(model_config, trackmate_list, nstd, nmean, n_tracks_list)
     else:
         train_model_Interaction(model_config, trackmate_list, nstd, nmean, n_tracks_list)
@@ -1106,32 +1095,6 @@ def test_model(model_config=None, trackmate_list=None, bVisu=False, bMinimizatio
     ntry = model_config['ntry']
 
     if net_type == 'InteractionParticles':
-
-        print(f'Testing {ntry}')
-        print(f'rot_mode:', model_config['rot_mode'])
-
-        if model_config['upgrade_type'] == 0:
-            print('H: MLP(message - b Erk)')
-        else:  # model_config['upgrade_type'] == 1:
-            print('H: MLP(message)')
-
-        if model_config['msg'] == 0:
-            print('msg: 0')
-        elif model_config['msg'] == 1:
-            print('msg: MLP(x_jp, y_jp, vx_p/d, vy_p/d, diff_erk)')
-        elif model_config['msg'] == 2:
-            print('msg: MLP(x_jp, y_jp, vx_p/d, vy_p/d)')
-        elif model_config['msg'] == 3:
-            print('msg: MLP(diff_erk)')
-        else:  # model_config['msg']==4:
-            print('msg: 0')
-        if model_config['cell_embedding'] == 0:
-            print('embedding: a false t false')
-        elif model_config['cell_embedding'] == 1:
-            print('embedding: a true t false')
-        else:  # model_config['cell_embedding'] == 2:
-            print('embedding: a true t true')
-
         model = InteractionParticles(model_config=model_config, device=device)
         model.nstd = nstd
         model.nmean = nmean
@@ -1304,7 +1267,7 @@ def test_model(model_config=None, trackmate_list=None, bVisu=False, bMinimizatio
             fig = plt.figure(figsize=(30, 18))
             # plt.ion()
 
-            ax = fig.add_subplot(3, 5, 9)
+            ax = fig.add_subplot(3, 5, 11)
             v = trans.transform(coeff_norm)
             plt.scatter(v[:, 0],v[:, 1], s=1, color=[0.75,0.75,0.75])
             # plt.gca().set_aspect('equal', 'datalim')
@@ -1315,9 +1278,6 @@ def test_model(model_config=None, trackmate_list=None, bVisu=False, bMinimizatio
             plt.scatter(v[:, 0],v[:, 1], s=5, color='k')
             plt.xlabel('UMAP-0 [a.u]', fontsize=12)
             plt.ylabel('UMAP-1 [a.u]', fontsize=12)
-            plt.xlim([0, 12])
-            plt.ylim([0, 10])
-
 
             ax = fig.add_subplot(3, 5, 1)
             plt.scatter(trackmate_true[list_all + 1, 2], trackmate_true[list_all + 1, 3], s=125, marker='.',
@@ -1495,7 +1455,7 @@ def test_model(model_config=None, trackmate_list=None, bVisu=False, bMinimizatio
             # unique = [(h, l) for i, (h, l) in enumerate(zip(handles, labels)) if l not in labels[:i]]
             # ax.legend(*zip(*unique))
 
-            ax = fig.add_subplot(3, 5, 11)
+            ax = fig.add_subplot(3, 5, 8)
             pos = np.argwhere(trackmate[list_all, 1] == 200)
             if len(pos) > 0:
                 c2x = xx0[pos[0], 0]
@@ -1552,7 +1512,7 @@ def test_model(model_config=None, trackmate_list=None, bVisu=False, bMinimizatio
                                   head_width=2,
                                   alpha=0.5, length_includes_head=True)
 
-            ax = fig.add_subplot(3, 5, 12)
+            ax = fig.add_subplot(3, 5, 9)
             plt.plot(np.arange(20, 20 + len(true_ERK2)), np.array(true_ERK2) * nstd[8] + nmean[8], 'g',
                      label='True ERK')
             plt.plot(np.arange(20, 20 + len(model_ERK2)), np.array(model_ERK2) * nstd[8] + nmean[8], 'k',
@@ -2413,6 +2373,72 @@ def load_model_config (id=505):
     if model_config_test['ntry'] == id:
         return model_config_test
 
+    #518 new version
+    model_config_test = {'ntry': 518,
+                    'dataset':  ['2309012_490'], #  ['2309012_490', '2309012_491', '2309012_492'],
+                    'trackmate_metric' : {'Label': 0,
+                    'Spot_ID': 1,
+                    'Track_ID': 2,
+                    'Quality': 3,
+                    'X': 4,
+                    'Y': 5,
+                    'Z': 6,
+                    'T': 7,
+                    'Frame': 8,
+                    'R': 9,
+                    'Visibility': 10,
+                    'Spot color': 11,
+                    'Mean Ch1': 12,
+                    'Median Ch1': 13,
+                    'Min Ch1': 14,
+                    'Max Ch1': 15,
+                    'Sum Ch1': 16,
+                    'Std Ch1': 17,
+                    'Ctrst Ch1': 18,
+                    'SNR Ch1': 19,
+                    'El. x0': 20,
+                    'El. y0': 21,
+                    'El. long axis': 22,
+                    'El. sh. axis': 23,
+                    'El. angle': 24,
+                    'El. a.r.': 25,
+                    'Area': 26,
+                    'Perim.': 27,
+                    'Circ.': 28,
+                    'Solidity': 29,
+                    'Shape index': 30},
+                    'metric_list' : ['Frame', 'Track_ID', 'X', 'Y', 'Mean Ch1', 'Area'],
+                    'file_folder' : '/home/allierc@hhmi.org/Desktop/signaling/HGF-ERK signaling/fig 1/B_E/210105/trackmate/',
+                    'dx':0.908,
+                    'dt':5.0,
+                    'upgrade_type': 0,
+                    'msg': 2,
+                    'aggr': 0,
+                    'rot_mode':1,
+                    'time_embedding': False,
+                    'n_mp_layers0': 5,
+                    'hidden_size0': 128,
+                    'output_size0': 16,
+                    'n_mp_layers1':2,
+                    'hidden_size1': 16,
+                    'n_mp_layers': 5,
+                    'hidden_size': 128,
+                    'bNoise': False,
+                    'noise_level': 0,
+                    'rollout_window': 2,
+                    'frame_start': 20,
+                    'frame_end': [200],   #   [200, 182, 182],  # [241,228,228],
+                    'n_tracks': 0,
+                    'radius': 0.15,
+                    'remove_update_U': True,
+                    'train_MLPs': True,
+                    'cell_embedding': 2,
+                    'batch_size':8,
+                    'net_type':'InteractionParticles',
+                    'training_mode': 't+1'}
+    if model_config_test['ntry']==id:
+        return model_config_test
+
     print('watch out model_config not find')
     return model_config_test
 
@@ -2428,14 +2454,28 @@ if __name__ == "__main__":
     scaler = StandardScaler()
     S_e = SamplesLoss(loss="sinkhorn", p=2, blur=.05)
 
-    for gtest in range(514,520):
+    for gtest in range(518,519):
 
         model_config = load_model_config(id=gtest)
         for key, value in model_config.items():
             print(key, ":", value)
+
+        if model_config['msg'] == 0:
+            print('msg: 0')
+        elif model_config['msg'] == 1:
+            print('msg: MLP(d, x_jp, y_jp, vx_ip, vy_ip, vx_jp, vy_jp, diff_erk)')
+        elif model_config['msg'] == 2:
+            print('msg: MLP(d, x_jp, y_jp, vx_ip, vy_ip, vx_jp, vy_jp, erkj)')
+        if model_config['cell_embedding'] == 0:
+            print('embedding: a false t false')
+        elif model_config['cell_embedding'] == 1:
+            print('embedding: a true t false')
+        else:  # model_config['cell_embedding'] == 2:
+            print('embedding: a true t true')
+
         trackmate_list, nstd, nmean, n_tracks_list = load_trackmate(model_config)
         train_model(model_config, trackmate_list, nstd, nmean, n_tracks_list)
-        # R2_list = test_model(model_config, trackmate_list=trackmate_list, bVisu=True, bMinimization=False, frame_start=160)
+        # R2_list = test_model(model_config, trackmate_list=trackmate_list, bVisu=True, bMinimization=False, frame_start=20)
 
 
 
