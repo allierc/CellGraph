@@ -366,11 +366,9 @@ def test_model(bVisu=False):
             unique = [(h, l) for i, (h, l) in enumerate(zip(handles, labels)) if l not in labels[:i]]
             ax.legend(*zip(*unique))
 
-
-
             # plt.show()
 
-            plt.savefig(f"./ReconsGraph/Fig_{frame}.tif")
+            plt.savefig(f"./tmp_recons/Fig_{ntry}_{frame}.tif")
             plt.close()
 
     print(f"RMSE: {np.round(np.mean(rmserr_list), 3)} +/- {np.round(np.std(rmserr_list), 3)}     {np.round(np.mean(rmserr_list) / nstd[4] * 3, 1)} sigma ")
@@ -445,7 +443,7 @@ if __name__ == "__main__":
                     'n_tracks': 3561,
                     'radius': 0.15}
 
-    test_model(bVisu=False)
+    test_model(bVisu=True)
 
     # model_config = {'ntry': 422,
     #                 'h': 0,

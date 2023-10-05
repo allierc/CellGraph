@@ -291,19 +291,13 @@ class InteractionParticles(pyg.nn.MessagePassing):
 
         x, edge_index, edge_attr = data.x, data.edge_index, data.edge_attr
 
-        phi = torch.randn([x.shape[0]], dtype=torch.float32, requires_grad=False, device=self.device) * np.pi * 2
-        cos = torch.cos(phi)
-        sin = torch.sin(phi)
-
-        x = torch.cat((x, cos[:, None], sin[:, None]), axis=-1)
-
         message = self.propagate(edge_index, x=(x, x), edge_attr=edge_attr)
 
         # derivative of ERK activity
         cell_id = x[:, 1].detach().cpu().numpy()
         embedding = self.a[self.data_id,cell_id]
 
-        pred = self.lin_update(torch.cat((embedding, x[:, 8:9], message, x[:, 16:17 + self.time_window]), axis=-1))
+        pred = self.lin_update(torch.cat((embedding, x[:, 8:9], message, x[:, 17:17 + self.time_window]), axis=-1))
 
         return pred
 
@@ -419,7 +413,6 @@ def train_model_Interaction(model_config=None, trackmate_list=None, nstd=None, n
         if epoch == 5:
             batch_size = model_config['batch_size']
             print(f'batchsize: {batch_size}')
-
         if epoch % 5 == 0:
             torch.save({'model_state_dict': model.state_dict(), 'optimizer_state_dict': optimizer.state_dict()},
                        f'{log_dir}/models/model_new_{epoch}.pt')
@@ -462,7 +455,7 @@ def train_model_Interaction(model_config=None, trackmate_list=None, nstd=None, n
                     x = torch.tensor(trackmate_list[data_id][list_all, 0:17], device=device)
                     if time_window>0:
                         for k in range(time_window):
-                            x=torch.cat((x,torch.tensor(trackmate_list[data_id][list_all-k, 8:9], device=device)),axis=-1)
+                            x=torch.cat((x,torch.tensor(trackmate_list[data_id][list_all-k-1, 8:9], device=device)),axis=-1)
                     if model_config['noise_level'] > 0:
                         noise_current = torch.randn((x.shape[0], 2), device=device) * model_config['noise_level']
                         x[:,2:4] = x[:,2:4] + noise_current
@@ -526,7 +519,7 @@ def train_model_Interaction(model_config=None, trackmate_list=None, nstd=None, n
                     x = torch.tensor(trackmate[list_all, 0:17], device=device)
                     if time_window>0:
                         for k in range(time_window):
-                            x=torch.cat((x,torch.tensor(trackmate_list[data_id][list_all-k, 8:9], device=device)),axis=-1)
+                            x=torch.cat((x,torch.tensor(trackmate_list[data_id][list_all-k-1, 8:9], device=device)),axis=-1)
                     target = torch.tensor(trackmate_true[list_all + 1, 10:11], device=device)
 
                     dataset = data.Data(x=x, pos=x[:, 2:4])
@@ -1162,6 +1155,8 @@ def test_model(model_config=None, trackmate_list=None, bVisu=False, bMinimizatio
     I = imread(f'{file_folder}/../ACTIVITY.tif')
     I = np.array(I)
 
+    frame_start
+
     for frame in tqdm(range(frame_start, 240)):  # frame_list:
 
         model.frame = int(frame)
@@ -1181,7 +1176,7 @@ def test_model(model_config=None, trackmate_list=None, bVisu=False, bMinimizatio
         x = torch.tensor(trackmate[list_all, 0:17], device=device)
         if time_window > 0:
             for k in range(time_window):
-                x = torch.cat((x, torch.tensor(trackmate_list[data_id][list_all - k, 8:9], device=device)), axis=-1)
+                x = torch.cat((x, torch.tensor(trackmate_list[data_id][list_all - k -1, 8:9], device=device)), axis=-1)
 
         target = torch.tensor(trackmate_true[list_all + 1, 8:9], device=device)
         target_pos = torch.tensor(trackmate_true[list_all, 2:4], device=device)
@@ -1227,7 +1222,7 @@ def test_model(model_config=None, trackmate_list=None, bVisu=False, bMinimizatio
             # print(f'{frame} {np.round(loss.item(), 3)}  {np.round(model_lin.score(xx, yy), 3)} mask {np.round(torch.sum(mask).item() / mask.shape[0], 3)}')
 
             fig = plt.figure(figsize=(30, 18))
-            # plt.ion()
+            plt.ion()
 
             ax = fig.add_subplot(3, 5, 11)
             v = trans.transform(coeff_norm)
@@ -1298,15 +1293,15 @@ def test_model(model_config=None, trackmate_list=None, bVisu=False, bMinimizatio
             yy = trackmate[list_all, 14:15]
             model_lin.fit(xx, yy)
             R2c.append(model_lin.score(xx, yy))
-            plt.plot(np.arange(20, 20 + len(R2c)), np.array(R2c), 'b', label='Cell density')
+            plt.plot(20+4*np.arange(len(R2c)), np.array(R2c), 'b', label='Cell density')
             yy = trackmate[list_all, 12:13]
             model_lin.fit(xx, yy)
             R2area.append(model_lin.score(xx, yy))
-            plt.plot(np.arange(20, 20 + len(R2area)), np.array(R2area), 'g', label='Cell area')
+            plt.plot(20+4*np.arange(len(R2area)), np.array(R2area), 'g', label='Cell area')
             yy = np.sqrt(trackmate[list_all, 4:5] ** 2 + trackmate[list_all, 5:6] ** 2)
             model_lin.fit(xx, yy)
             R2speed.append(model_lin.score(xx, yy))
-            plt.plot(np.arange(20, 20 + len(R2speed)), np.array(R2speed), 'c', label='Cell velocity')
+            plt.plot(20+4*np.arange(len(R2speed)), np.array(R2speed), 'c', label='Cell velocity')
             plt.legend(loc='upper left', fontsize=12)
 
             ax = fig.add_subplot(3, 5, 4)
@@ -2661,7 +2656,9 @@ if __name__ == "__main__":
     scaler = StandardScaler()
     S_e = SamplesLoss(loss="sinkhorn", p=2, blur=.05)
 
-    for gtest in range(519,520):
+    gtest_list = [519, 521, 522]
+
+    for gtest in range(522,523):
 
         model_config = load_model_config(id=gtest)
         for key, value in model_config.items():
@@ -2681,8 +2678,8 @@ if __name__ == "__main__":
             print('embedding: a true t true')
 
         trackmate_list, nstd, nmean, n_tracks_list = load_trackmate(model_config)
-        train_model_Interaction(model_config, trackmate_list, nstd, nmean, n_tracks_list)
-        # R2_list = test_model(model_config, trackmate_list=trackmate_list, bVisu=True, bMinimization=False, frame_start=20)
+        # train_model_Interaction(model_config, trackmate_list, nstd, nmean, n_tracks_list)
+        R2_list = test_model(model_config, trackmate_list=trackmate_list, bVisu=True, bMinimization=False, frame_start=20)
         # train_model_ResNet(model_config, trackmate_list, nstd, nmean, n_tracks_list)
 
 
