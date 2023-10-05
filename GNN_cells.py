@@ -275,7 +275,7 @@ class InteractionParticles(pyg.nn.MessagePassing):
         if (self.msg==1) | (self.msg==2):
             self.lin_edge = MLP(input_size=8, hidden_size=self.hidden_size0, output_size=self.output_size0, layers=self.nlayers0, device=self.device)
 
-        self.lin_update = MLP(input_size=self.output_size0+self.cell_embedding + 2 + self.time_window, hidden_size=self.hidden_size1, output_size=1, layers=self.nlayers1, device=self.device)
+        self.lin_update = MLP(input_size=self.output_size0+self.cell_embedding + 1 + self.time_window, hidden_size=self.hidden_size1, output_size=1, layers=self.nlayers1, device=self.device)
 
 
         self.a = nn.Parameter(torch.tensor(np.ones((len(model_config['dataset']),int(self.n_tracks+1), self.cell_embedding)), requires_grad=True, device=self.device))
@@ -497,10 +497,7 @@ def train_model_Interaction(model_config=None, trackmate_list=None, nstd=None, n
 
             for N in range(1,model_config['frame_end'][data_id] * data_augmentation_loop //regressive_step):  # frame_list:
 
-                m = 2 + time_window + np.random.randint(model_config['frame_end'][data_id] - - 1 - regressive_step)
-
-                optimizer.zero_grad()
-                loss=0
+                m = 20 + np.random.randint(model_config['frame_end'][data_id] -1 - regressive_step -20)
 
                 phi = torch.randn(1, dtype=torch.float32, requires_grad=False, device=device) * np.pi * 2
                 cos_phi = torch.cos(phi)
@@ -531,18 +528,21 @@ def train_model_Interaction(model_config=None, trackmate_list=None, nstd=None, n
                     dataset = data.Data(x=x, edge_index=edges[:, pos[:, 0]],
                                         edge_attr=torch.tensor(distance[pos[:, 0]], device=device))
 
+                    optimizer.zero_grad()
                     pred = model(data=dataset, data_id=data_id, step=1, cos_phi=cos_phi, sin_phi=sin_phi)
 
-                    loss += ((pred-target)*mask).norm(2)
+                    loss = ((pred-target)*mask).norm(2)
+
+                    loss.backward()
+                    optimizer.step()
+                    loss_list.append(loss.item() / regressive_step)
 
                     for k in range(len(mask)):
                         if mask[k] == 1:
                             trackmate[list_all[k] + 1, 10:11] = np.array(pred[k].detach().cpu())
                             trackmate[list_all[k] + 1, 8:9] = trackmate[list_all[k], 8:9] + trackmate[list_all[k] + 1,10:11]
 
-                loss.backward()
-                optimizer.step()
-                loss_list.append(loss.item()/regressive_step)
+
 
 
         if np.mean(loss_list) < best_loss:
@@ -2656,9 +2656,7 @@ if __name__ == "__main__":
     scaler = StandardScaler()
     S_e = SamplesLoss(loss="sinkhorn", p=2, blur=.05)
 
-    gtest_list = [519, 521, 522]
-
-    for gtest in range(522,523):
+    for gtest in range(519,520):
 
         model_config = load_model_config(id=gtest)
         for key, value in model_config.items():
@@ -2678,7 +2676,7 @@ if __name__ == "__main__":
             print('embedding: a true t true')
 
         trackmate_list, nstd, nmean, n_tracks_list = load_trackmate(model_config)
-        # train_model_Interaction(model_config, trackmate_list, nstd, nmean, n_tracks_list)
+        train_model_Interaction(model_config, trackmate_list, nstd, nmean, n_tracks_list)
         R2_list = test_model(model_config, trackmate_list=trackmate_list, bVisu=True, bMinimization=False, frame_start=20)
         # train_model_ResNet(model_config, trackmate_list, nstd, nmean, n_tracks_list)
 
