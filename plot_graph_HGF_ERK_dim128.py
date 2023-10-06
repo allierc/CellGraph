@@ -109,7 +109,7 @@ def test_model(bVisu=False):
     # trackmate[pos, 4:5] = 0
     # trackmate[pos, 8:9] = 0
 
-    for frame in tqdm(range(175, 240)):  # frame_list:
+    for frame in tqdm(range(20, 240)):  # frame_list:
 
         model.frame = int(frame)
         pos = np.argwhere(trackmate[:, 0] == frame)
@@ -425,11 +425,32 @@ if __name__ == "__main__":
     print('... done')
 
 
-    model_config = {'ntry': 420,
+    # model_config = {'ntry': 420,
+    #                 'h': 0,
+    #                 'msg': 1,
+    #                 'embedding': 128,
+    #                 'cell_embedding': 1,
+    #                 'output_angle': False,
+    #                 'n_mp_layers': 5,
+    #                 'hidden_size': 32,
+    #                 'noise_level': 0,
+    #                 'batch_size': 8,
+    #                 'bRollout': True,
+    #                 'rollout_window': 2,
+    #                 'remove_update_U': True,
+    #                 'frame_start': 20,
+    #                 'frame_end': [241, 228, 228],
+    #                 'n_tracks': 3561,
+    #                 'radius': 0.15}
+    #
+    # test_model(bVisu=True)
+
+    model_config = {'ntry': 426,
                     'h': 0,
                     'msg': 1,
                     'embedding': 128,
                     'cell_embedding': 1,
+                    'train_MLPs': True,
                     'output_angle': False,
                     'n_mp_layers': 5,
                     'hidden_size': 32,
