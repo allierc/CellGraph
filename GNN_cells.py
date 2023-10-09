@@ -702,6 +702,7 @@ class EdgeNetwork(pyg.nn.MessagePassing):
         vyj = x_j[:, 3:4]
 
         erki = x_i[:,4:5]
+        
         erkj = x_j[:,4:5]
 
         dx = xj - xi
@@ -709,7 +710,7 @@ class EdgeNetwork(pyg.nn.MessagePassing):
 
         d = edge_feature[:,0:1]
 
-        self.new_edges = torch.cat((d, dx , dy , vxi, vyi, vxi, vyj, erki, erkj), dim=-1)
+        self.new_edges = torch.cat((d, dx , dy , vxi, vyi, vxj, vyj, erki, erkj), dim=-1)
 
         return d
 class InteractionNetwork(pyg.nn.MessagePassing):
