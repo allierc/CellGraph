@@ -767,15 +767,24 @@ class ResNetGNN(torch.nn.Module):
         self.edge_init = EdgeNetwork()
 
         self.layer = torch.nn.ModuleList([InteractionNetwork(layers=3, embedding=self.embedding, h=self.upgrade_type, device=self.device) for _ in range(self.nlayers)])
-        self.node_out = MLP2(input_size=self.embedding, hidden_size=self.hidden_size, output_size=1, layers=3, device=self.device)
+
+
+        self.node_out = pyg.nn.MLP(in_channels=self.embedding, hidden_channels=self.hidden_size, out_channels=1, num_layers=3, act='relu', device=self.device, dtype=torch.float64)
+        # self.node_out = MLP2(input_size=self.embedding, hidden_size=self.hidden_size, output_size=1, layers=3, device=self.device)
 
         self.a = nn.Parameter(torch.tensor(np.ones((3, int(self.n_tracks + 1), self.cell_embedding)), requires_grad=False, device=self.device))
         self.t = nn.Parameter(torch.tensor(np.ones((3, int(self.n_tracks + 1), self.cell_embedding)), requires_grad=False, device=self.device))
 
         self.upgrade_type_all = torch.zeros((int(self.n_tracks + 1), 64), requires_grad=False, device=self.device,dtype=torch.float64)
 
-        self.embedding_node = MLP2(input_size=6 + self.cell_embedding, hidden_size=self.embedding, output_size=self.embedding,layers=3, device=self.device)
-        self.embedding_edges = MLP2(input_size=9, hidden_size=self.embedding, output_size=self.embedding,layers=3, device=self.device)
+        self.embedding_node = pyg.nn.MLP(in_channels= 6 + self.cell_embedding, hidden_channels=self.embedding, out_channels=self.embedding, num_layers=3, act='relu', device=self.device, dtype=torch.float64)
+        # self.embedding_node = MLP2(input_size=6 + self.cell_embedding, hidden_size=self.embedding, output_size=self.embedding,layers=3, device=self.device)
+        self.embedding_edges = pyg.nn.MLP(in_channels=9, hidden_channels=self.embedding,out_channels=self.embedding, num_layers=3, act='relu', device=self.device,dtype=torch.float64)
+        # self.embedding_edges = MLP2(input_size=9, hidden_size=self.embedding, output_size=self.embedding,layers=3, device=self.device)
+
+        self.to(device=self.device)
+        self.to(torch.float64)
+
 
     def forward(self, data, data_id,step=2, cos_phi=0, sin_phi=0):
 
