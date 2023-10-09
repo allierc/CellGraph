@@ -1,12 +1,9 @@
-
-import os
-import matplotlib.pyplot as plt
 import numpy as np
+import matplotlib.pyplot as plt
 import torch
-import pandas as pd
-import networkx as nx
-from torch_geometric.utils.convert import to_networkx
 from tqdm import tqdm
+import os
+
 import glob
 import torch_geometric as pyg
 import torch_geometric.data as data
@@ -17,656 +14,664 @@ from torch.nn import functional as F
 from shutil import copyfile
 from tensorboardX import SummaryWriter
 from prettytable import PrettyTable
-from scipy.spatial import Voronoi, voronoi_plot_2d
-from tifffile import imwrite, imread
-from scipy.ndimage import gaussian_filter
-import torch_geometric.transforms as T
-from geomloss import SamplesLoss
 import time
+import networkx as nx
+from torch_geometric.utils.convert import to_networkx
 
-def voronoi_finite_polygons_2d(vor, radius=0.05):
-    """
-    Reconstruct infinite voronoi regions in a 2D diagram to finite
-    regions.
+def normalize99(Y, lower=1,upper=99):
+    """ normalize image so 0.0 is 1st percentile and 1.0 is 99th percentile """
+    X = Y.copy()
+    x01 = np.percentile(X, lower)
+    x99 = np.percentile(X, upper)
+    X = (X - x01) / (x99 - x01)
+    return x01, x99
+def display_frame(t=20):
+    s = t/(niter//save_per-1)
+    plt.scatter(Zsvg[:,0,t], Zsvg[:,1,t], color=[s,0,1-s])
+    plt.axis('equal')
+    plt.axis([0,1,0,1])
+def distmat_square(X,Y):
+    return torch.sum( bc_diff(X[:,None,:] - Y[None,:,:])**2, axis=2 )
+def distmat_square2(X, Y):
+    X_sq = (X ** 2).sum(axis=-1)
+    Y_sq = (Y ** 2).sum(axis=-1)
+    cross_term = X.matmul(Y.T)
+    return X_sq[:, None] + Y_sq[None, :] - 2 * cross_term
+def kernel(X,Y):
+    return -torch.sqrt( distmat_square(X,Y) )
+def MMD(X,Y):
+    n = X.shape[0]
+    m = Y.shape[0]
+    a = torch.sum( kernel(X,X) )/n**2 + \
+      torch.sum( kernel(Y,Y) )/m**2 - \
+      2*torch.sum( kernel(X,Y) )/(n*m)
+    return a.item()
+def psi(r,p):
+    sigma = .05;
+    return -p[2]*torch.exp(-r**p[0] / (2 * sigma ** 2)) + p[3]* torch.exp(-r**p[1] / (2 * sigma ** 2))
+def Speed(X,Y,p):
+    sigma = .05;
 
-    Parameters
-    ----------
-    vor : Voronoi
-        Input diagram
-    radius : float, optional
-        Distance to 'points at infinity'.
+    temp=distmat_square(X,Y)
+    return 0.25/X.shape[0] * 1/sigma**2 * torch.sum(psi(distmat_square(X,Y),p)[:,:,None] * bc_diff( X[:,None,:] - Y[None,:,:] ), axis=1 )
+def Edge_index(X,Y):
 
-    Returns
-    -------
-    regions : list of tuples
-        Indices of vertices in each revised Voronoi regions.
-    vertices : list of tuples
-        Coordinates for revised Voronoi vertices. Same as coordinates
-        of input vertices, with 'points at infinity' appended to the
-        end.
+    return torch.sum( bc_diff(X[:,None,:] - Y[None,:,:])**2, axis=2 )
+class MLP(nn.Module):
 
-    """
+    def __init__(self, input_size, output_size, nlayers, hidden_size, device):
 
-    if vor.points.shape[1] != 2:
-        raise ValueError("Requires 2D input")
-
-    new_regions = []
-    new_vertices = vor.vertices.tolist()
-
-    center = vor.points.mean(axis=0)
-    if radius is None:
-        radius = vor.points.ptp().max()
-
-    # Construct a map containing all ridges for a given point
-    all_ridges = {}
-    for (p1, p2), (v1, v2) in zip(vor.ridge_points, vor.ridge_vertices):
-        all_ridges.setdefault(p1, []).append((p2, v1, v2))
-        all_ridges.setdefault(p2, []).append((p1, v1, v2))
-
-    # Reconstruct infinite regions
-    for p1, region in enumerate(vor.point_region):
-        vertices = vor.regions[region]
-
-        if all(v >= 0 for v in vertices):
-            # finite region
-            new_regions.append(vertices)
-            continue
-
-        # reconstruct a non-finite region
-
-        try:
-            ridges = all_ridges[p1]
-        except:
-            continue
-
-        new_region = [v for v in vertices if v >= 0]
-
-        for p2, v1, v2 in ridges:
-            if v2 < 0:
-                v1, v2 = v2, v1
-            if v1 >= 0:
-                # finite ridge: already in the region
-                continue
-
-            # Compute the missing endpoint of an infinite ridge
-
-            t = vor.points[p2] - vor.points[p1] # tangent
-            t /= np.linalg.norm(t)
-            n = np.array([-t[1], t[0]])  # normal
-
-            midpoint = vor.points[[p1, p2]].mean(axis=0)
-            direction = np.sign(np.dot(midpoint - center, n)) * n
-            far_point = vor.vertices[v2] + direction * radius
-
-            new_region.append(len(new_vertices))
-            new_vertices.append(far_point.tolist())
-
-        # sort region counterclockwise
-        vs = np.asarray([new_vertices[v] for v in new_region])
-        c = vs.mean(axis=0)
-        angles = np.arctan2(vs[:,1] - c[1], vs[:,0] - c[0])
-        new_region = np.array(new_region)[np.argsort(angles)]
-
-        # finish
-        new_regions.append(new_region.tolist())
-
-    return new_regions, np.asarray(new_vertices)
-def explode_xy(xy):
-    xl=[]
-    yl=[]
-    for i in range(len(xy)):
-        xl.append(xy[i][0])
-        yl.append(xy[i][1])
-    return xl,yl
-def shoelace_area(x_list,y_list):
-    a1,a2=0,0
-    x_list.append(x_list[0])
-    y_list.append(y_list[0])
-    for j in range(len(x_list)-1):
-        a1 += x_list[j]*y_list[j+1]
-        a2 += y_list[j]*x_list[j+1]
-    l=abs(a1-a2)/2
-    return l
-class OTLoss():
-
-    def __init__(self, device):
-        blur = 0.05
-        self.ot_solver = SamplesLoss("sinkhorn", p=2, blur=0.05, scaling=0.9, debias=True)
-        self.device = device
-
-    def __call__(self, x,y):
-        loss_xy = self.ot_solver(x,y)
-        return loss_xy
-
-class Erk_move(nn.Module):
-    def __init__(self, GNN, x, data, data_id, device):    # in_feats=2, out_feats=2, num_layers=3, hidden=128):
-
-        super(Erk_move, self).__init__()
-
-        self.device = device
-        self.GNN= GNN
-        self.x0 = x
-        self.dataset = data
-        self.ff = data_id
-        # self.old_x = nn.Parameter(x[:, :].clone().detach().requires_grad_(False))
-        self.new_x = nn.Parameter(x[:,:].clone().detach().requires_grad_(True))
-
-    def forward(self):
-
-        dataset = data.Data(x=self.new_x.clone().detach(), pos=self.new_x[:,2:4].detach())
-        transform = T.Compose([T.Delaunay(),T.FaceToEdge(),T.Distance(norm=False)])
-        dataset = transform(dataset)
-        distance = dataset.edge_attr.detach().cpu().numpy()
-        pos = np.argwhere(distance<0.15)
-        edges = dataset.edge_index
-
-        # x_temp=torch.cat((self.old_x[:,0:6],self.new_x,self.old_x[:,8:19]),dim=1)
-        dataset = data.Data(x=self.new_x, edge_index=edges[:, pos[:, 0]],edge_attr=torch.tensor(distance[pos[:, 0]], device=self.device))
-        pred = self.GNN(data=dataset, data_id=self.ff)
-
-        return pred
-
-class MLP(torch.nn.Module):
-    """Multi-Layer perceptron"""
-    def __init__(self, input_size, hidden_size, output_size, layers, device):
-        super().__init__()
-        self.layers = torch.nn.ModuleList()
-        self.layernorm = False
-
-        for i in range(layers):
-            self.layers.append(torch.nn.Linear(
-                input_size if i == 0 else hidden_size,
-                output_size if i == layers - 1 else hidden_size, device=device, dtype=torch.float64
-            ))
-            if i != layers - 1:
-                self.layers.append(torch.nn.ReLU())
-                # self.layers.append(torch.nn.Dropout(p=0.0))
-        if self.layernorm:
-            self.layers.append(torch.nn.LayerNorm(output_size, device=device, dtype=torch.float64))
-        self.reset_parameters()
-
-    def reset_parameters(self):
-        for layer in self.layers:
-            if isinstance(layer, torch.nn.Linear):
-                layer.weight.data.normal_(0, 1 / math.sqrt(layer.in_features))
-                layer.bias.data.fill_(0)
+        super(MLP, self).__init__()
+        self.layers = nn.ModuleList()
+        self.layers.append(nn.Linear(input_size, hidden_size, device=device))
+        if nlayers > 2:
+            for i in range(1, nlayers - 1):
+                layer = nn.Linear(hidden_size, hidden_size, device=device)
+                nn.init.normal_(layer.weight, std=0.1)
+                nn.init.zeros_(layer.bias)
+                self.layers.append(layer)
+        layer = nn.Linear(hidden_size, output_size, device=device)
+        nn.init.normal_(layer.weight, std=0.1)
+        nn.init.zeros_(layer.bias)
+        self.layers.append(layer)
 
     def forward(self, x):
-        for layer in self.layers:
-            x = layer(x)
-        return x
-class EdgeNetwork(pyg.nn.MessagePassing):
-    """Interaction Network as proposed in this paper:
-    https://proceedings.neurips.cc/paper/2016/hash/3147da8ab4a0437c15ef51a5cc7f2dc4-Abstract.html"""
-    def __init__(self, hidden_size, layers):
-        super().__init__(aggr='add')  # "Add" aggregation.
-
-    def forward(self, x, edge_index, edge_feature):
-
-        aggr = self.propagate(edge_index, x=(x, x), edge_feature=edge_feature)
-
-        return self.new_edges
-
-    def message(self, x_i, x_j, edge_feature):
-
-        xi = x_i[:, 0:1]
-        yi = x_i[:, 1:2]
-
-        xj = x_j[:, 0:1]
-        yj = x_j[:, 1:2]
-
-        vxi = x_i[:, 2:3]
-        vyi = x_i[:, 3:4]
-
-        vxj = x_j[:, 2:3]
-        vyj = x_j[:, 3:4]
-
-        erki = x_i[:,4:5]
-        erkj = x_j[:,4:5]
-
-        dx = xj - xi
-        dy = yj - yi
-        dvx = vxj - vxi
-        dvy = vyj - vyi
-
-        d = edge_feature[:,0:1]
-
-        self.new_edges = torch.cat((d, dx , dy , dvx, dvy), dim=-1)
-
-        return d
-class InteractionNetwork(pyg.nn.MessagePassing):
-    """Interaction Network as proposed in this paper:
-    https://proceedings.neurips.cc/paper/2016/hash/3147da8ab4a0437c15ef51a5cc7f2dc4-Abstract.html"""
-    def __init__(self, hidden_size, layers, h, msg, device):
-        super().__init__(aggr='add')  # "Add" aggregation.
-
-        self.hidden_size = hidden_size
-        self.h = h
-        self.layers = layers
-        self.msg = msg
-        self.device =device
-
-        if (self.msg == 0) | (self.msg==3):
-             self.lin_edge = MLP(input_size=1, hidden_size=self.hidden_size, output_size=7, layers=self.layers, device=self.device)
-        if (self.msg == 1):
-            self.lin_edge = MLP(input_size=13, hidden_size=self.hidden_size, output_size=7, layers=self.layers, device=self.device)
-        if (self.msg == 2):
-            self.lin_edge = MLP(input_size=14, hidden_size=self.hidden_size, output_size=7, layers=self.layers, device=self.device)
-
-        if self.h == 0:
-            self.lin_node = MLP(input_size=12, hidden_size=self.hidden_size, output_size=7, layers=self.layers, device=self.device)
-        else:
-            self.lin_node = MLP(input_size=64, hidden_size=self.hidden_size, output_size=7, layers=self.layers, device=self.device)
-
-        self.rnn = torch.nn.GRUCell(14, 64,device=self.device,dtype=torch.float64)
-
-    def forward(self, x, edge_index, edge_feature):
-
-        aggr = self.propagate(edge_index, x=(x, x), edge_feature=edge_feature)
-
-        if self.h==0:
-            node_out = self.lin_node(torch.cat((x[:,:-2], aggr), dim=-1))
-            prev_node_feature = node_out[:, :-2]
-            prev_edge_feature = edge_feature[:,:-2]
-
-            node_out = x + node_out
-            node_out[:, :-2] = prev_node_feature  # no update ui
-
-            edge_out = edge_feature + model.new_edges
-            if model_config['remove_update_U']:
-                edge_out[:,:-2] = prev_edge_feature     #no update ui
-
-        else:
-            super_x=torch.cat((x, coeff, aggr), dim=-1)
-            model.h = self.rnn(super_x,model.h)     ########### TO BE CORRECTED ###################
-            node_out = self.lin_node(model.h)
-            edge_out = edge_feature + self.new_edges
-
-        return node_out, edge_out
-
-    def message(self, x_i, x_j, edge_feature):
-
-        xi = x_i[:, 0:1]
-        yi = x_i[:, 1:2]
-
-        xj = x_j[:, 0:1]
-        yj = x_j[:, 1:2]
-
-        vxi = x_i[:, 2:3]
-        vyi = x_i[:, 3:4]
-
-        vxj = x_j[:, 2:3]
-        vyj = x_j[:, 3:4]
-
-        erki = x_i[:,4:5]
-        erkj = x_j[:,4:5]
-
-
-        dx = xj - xi
-        dy = yj - yi
-        dvx = vxj - vxi
-        dvy = vyj - vyi
-
-
-        diff_erk = erkj - erki
-
-        cell_id =x_i[:, 1].detach().cpu().numpy()
-        coeff=model.a[cell_id,:]
-
-        if self.msg==0:
-            x = diff_erk*0
-        elif mself.msg==1:
-            x = torch.cat((edge_feature, dx*coeff[:,0:1], dy*coeff[:,0:1], dvx*coeff[:,1:2], dvy*coeff[:,1:2]), dim=-1)
-        elif self.msg==2:
-            x = torch.cat((edge_feature, dx*coeff[:,0:1], dy*coeff[:,0:1], dvx*coeff[:,1:2], dvy*coeff[:,1:2], diff_erk), dim=-1)
-        else: # model_config['msg']==3:
-            x = diff_erk*0
-
-        x = self.lin_edge(x)
-        self.new_edges = x
-
-        return x
-class InteractionNetworkEmb(pyg.nn.MessagePassing):
-    """Interaction Network as proposed in this paper:
-    https://proceedings.neurips.cc/paper/2016/hash/3147da8ab4a0437c15ef51a5cc7f2dc4-Abstract.html"""
-    def __init__(self, layers, embedding, device, h):
-        super().__init__(aggr='add')  # "Add" aggregation.
-
-        self.h = h
-        self.layers = layers
-        self.device =device
-        self.embedding = embedding
-
-        self.lin_edge = MLP(input_size=3*self.embedding, hidden_size=3*self.embedding, output_size=self.embedding, layers= self.layers, device=self.device)
-
-        if self.h == 0:
-            self.lin_node = MLP(input_size=2*self.embedding, hidden_size=2*self.embedding, output_size=self.embedding, layers= self.layers, device=self.device)
-        else:
-            self.lin_node = MLP(input_size=64, hidden_size=self.embedding, output_size=self.embedding, layers= self.layers, device=self.device)
-            self.rnn = torch.nn.GRUCell(14, 64,device=self.device,dtype=torch.float64)
-
-    def forward(self, x, edge_index, edge_feature):
-
-        aggr = self.propagate(edge_index, x=(x, x), edge_feature=edge_feature)
-
-        if self.h==0:
-            node_out = self.lin_node(torch.cat((x, aggr), dim=-1))
-            node_out = x + node_out
-            edge_out = edge_feature + self.new_edges
-
-        else:
-            super_x=torch.cat((x, aggr), dim=-1)
-            self.state = self.rnn(super_x,self.state)
-            node_out = self.lin_node(self.state)
-            edge_out = edge_feature + self.new_edges
-
-        return node_out, edge_out
-
-    def message(self, x_i, x_j, edge_feature):
-
-        x = torch.cat((edge_feature, x_i, x_j ), dim=-1)
-
-        x = self.lin_edge(x)
-        self.new_edges = x
-
+        for l in range(len(self.layers) - 1):
+            x = self.layers[l](x)
+            x = F.relu(x)
+        x = self.layers[-1](x)
         return x
 
-class ResNetGNN(torch.nn.Module):
-    """Graph Network-based Simulators(GNS)"""
-    def __init__(self,model_config, device):
-        super().__init__()
+class InteractionParticles(pyg.nn.MessagePassing):
+    """Interaction Network as proposed in this paper:
+    https://proceedings.neurips.cc/paper/2016/hash/3147da8ab4a0437c15ef51a5cc7f2dc4-Abstract.html"""
+    def __init__(self, model_config, device):
 
+        super(InteractionParticles, self).__init__(aggr='add')  # "Add" aggregation.
+
+        self.device = device
+        self.input_size = model_config['input_size']
+        self.output_size = model_config['output_size']
         self.hidden_size = model_config['hidden_size']
-        self.embedding = model_config['embedding']
         self.nlayers = model_config['n_mp_layers']
-        self.h = model_config['h']
+
         self.noise_level = model_config['noise_level']
-        self.n_tracks = model_config['n_tracks']
-        self.msg=model_config['msg']
-        self.device=device
-        self.output_angle = model_config['output_angle']
 
-        self.edge_init = EdgeNetwork(self.hidden_size, layers=3)
+        self.lin_edge = MLP(input_size=self.input_size, output_size=self.output_size, nlayers=self.nlayers, hidden_size=self.hidden_size, device=self.device)
 
-        if self.embedding > 0:
-            self.layer = torch.nn.ModuleList([InteractionNetworkEmb(layers=3, embedding=self.embedding, h=self.h, device=self.device) for _ in range(self.nlayers)])
-            self.node_out = MLP(input_size=self.embedding, hidden_size=self.hidden_size, output_size=1, layers=3, device=self.device)
-        else:
-            self.layer = torch.nn.ModuleList([InteractionNetwork(hidden_size=self.hidden_size, layers=3, h=self.h, msg=self.msg, device=self.device) for _ in range(self.nlayers)])
-            self.node_out = MLP(input_size=7, hidden_size=self.hidden_size, output_size=1, layers=3, device=self.device)
+    def forward(self, data):
+        x, edge_index = data.x, data.edge_index
+        edge_index, _ = pyg_utils.remove_self_loops(edge_index)
+        acc = self.propagate(edge_index, x=(x,x))
+        return acc
 
-        self.a = nn.Parameter(torch.tensor(np.ones((3,int(self.n_tracks+1), 3)), requires_grad=False, device=self.device))
-        self.t = nn.Parameter(torch.tensor(np.ones((3,int(self.n_tracks+1), 3)), requires_grad=False, device=self.device))
+    def message(self, x_i, x_j):
 
-        self.h_all = torch.zeros((int(self.n_tracks + 1), 64), requires_grad=False, device='cuda:0', dtype=torch.float64)
+        r = torch.sqrt(torch.sum((x_i[:,0:2] - x_j[:,0:2])**2,axis=1)) / radius  # squared distance
+        r = r[:, None]
 
-        if self.embedding>0:
-            self.embedding_node = MLP(input_size=5+3, hidden_size=self.embedding, output_size=self.embedding, layers=3, device=self.device)
-            self.embedding_edges = MLP(input_size=5, hidden_size=self.embedding, output_size=self.embedding, layers=3, device=self.device)
+        delta_pos=(x_i[:,0:2]-x_j[:,0:2]) / radius
+        x_i_vx = x_i[:, 2:3]  / vnorm[4]
+        x_i_vy = x_i[:, 3:4]  / vnorm[5]
+        x_i_type = x_i[:,4:5]
+        x_j_vx = x_j[:, 2:3]  / vnorm[4]
+        x_j_vy = x_j[:, 3:4]  / vnorm[5]
 
-    def forward(self, data, data_id):
+        in_features = torch.cat((delta_pos, r, x_i_vx, x_i_vy, x_j_vx, x_j_vy, x_i_type), dim=-1)   # [:,None].repeat(1,4)
 
-        node_feature = torch.cat((data.x[:,2:4],data.x[:,6:8],data.x[:,4:5]), dim=-1)
-        noise = torch.randn((node_feature.shape[0], node_feature.shape[1]),requires_grad=False, device='cuda:0') * self.noise_level
-        node_feature= node_feature+noise
-        edge_feature = self.edge_init(node_feature, data.edge_index, edge_feature=data.edge_attr)
+        return self.lin_edge(in_features)
+    def update(self, aggr_out):
 
-        if self.embedding > 0:
-            cell_embedding = self.a[data_id, data.x[:, 1].detach().cpu().numpy(), :]
-            node_feature = self.embedding_node(torch.cat((node_feature, cell_embedding), dim=-1))
-            edge_feature = self.embedding_edges(edge_feature)
-
-        for i in range(self.nlayers):
-            node_feature, edge_feature = self.layer[i](node_feature, data.edge_index, edge_feature=edge_feature)
-        pred = self.node_out(node_feature)
-
-        return pred
-
-def train_model():
-    ntry = model_config['ntry']
-    bRollout = model_config['bRollout']
-    output_angle = model_config['output_angle']
-
-    print('ntry: ', model_config['ntry'])
-    if model_config['h'] == 0:
-        print('no GRUcell ')
-    elif model_config['h'] == 1:
-        print('with GRUcell ')
-    if (model_config['msg'] == 0) | (model_config['embedding'] > 0):
-        print('msg: 0')
-    elif model_config['msg'] == 1:
-        print('msg: MLP(x_jp, y_jp, vx_p, vy_p, ux, uy)')
-    elif model_config['msg'] == 2:
-        print('msg: MLP(x_jp, y_jp, vx_p, vy_p, ux, uy, diff erkj)')
-    elif model_config['msg'] == 3:
-        print('msg: MLP(diff_erk)')
-    else:  # model_config['msg']==4:
-        print('msg: 0')
-    print('embedding: ', model_config['embedding'])
-    print('hidden_size: ', model_config['hidden_size'])
-    print('n_mp_layers: ', model_config['n_mp_layers'])
-    print('noise_level: ', model_config['noise_level'])
-    print('bRollout: ', model_config['bRollout'])
-    print('rollout_window: ', model_config['rollout_window'])
-    print(f'batch size: ', model_config['batch_size'])
-    print('remove_update_U: ', model_config['remove_update_U'])
-    print('output_angle: ', model_config['output_angle'])
-
-    l_dir = os.path.join('.', 'log')
-    log_dir = os.path.join(l_dir, 'try_{}'.format(ntry))
-    os.makedirs(log_dir, exist_ok=True)
-    os.makedirs(os.path.join(log_dir, 'models'), exist_ok=True)
-    os.makedirs(os.path.join(log_dir, 'data', 'val_outputs'), exist_ok=True)
-    copyfile(os.path.realpath(__file__), os.path.join(log_dir, 'training_code.py'))
-
-    model = ResNetGNN(model_config=model_config, device=device)
-    # state_dict = torch.load(f"./log/try_{ntry}/models/best_model.pt")
-    # model.load_state_dict(state_dict['model_state_dict'])
-
-    print('model = ResNetGNN()   predict derivative Erk ')
-
-    if model_config['train_MLPs'] == False:
-        print('No MLPs training watch out')
-        state_dict = torch.load(f"./log/try_421/models/best_model_new_emb_concatenate.pt")
-        model.load_state_dict(state_dict['model_state_dict'])
-        for param in model.layer.parameters():
-            param.requires_grad = False
-        for param in model.node_out.parameters():
-            param.requires_grad = False
-        for param in model.embedding_node.parameters():
-            param.requires_grad = False
-        for param in model.embedding_edges.parameters():
-            param.requires_grad = False
-
-        table = PrettyTable(["Modules", "Parameters"])
-        total_params = 0
-        for name, parameter in model.layer.named_parameters():
-            if not parameter.requires_grad:
-                continue
-            param = parameter.numel()
-            table.add_row([name, param])
-            total_params += param
-        print(table)
-        print(f"Total Trainable Params: {total_params}")
-        table = PrettyTable(["Modules", "Parameters"])
-        total_params = 0
-        for name, parameter in model.node_out.named_parameters():
-            if not parameter.requires_grad:
-                continue
-            param = parameter.numel()
-            table.add_row([name, param])
-            total_params += param
-        print(table)
-        print(f"Total Trainable Params: {total_params}")
-        table = PrettyTable(["Modules", "Parameters"])
-        total_params = 0
-        for name, parameter in model.embedding_node.named_parameters():
-            if not parameter.requires_grad:
-                continue
-            param = parameter.numel()
-            table.add_row([name, param])
-            total_params += param
-        print(table)
-        print(f"Total Trainable Params: {total_params}")
-        table = PrettyTable(["Modules", "Parameters"])
-        total_params = 0
-        for name, parameter in model.embedding_edges.named_parameters():
-            if not parameter.requires_grad:
-                continue
-            param = parameter.numel()
-            table.add_row([name, param])
-            total_params += param
-        print(table)
-        print(f"Total Trainable Params: {total_params}")
-
-    if model_config['cell_embedding'] == 0:
-        model.a.requires_grad = False
-        model.t.requires_grad = False
-        print('embedding: a false t false')
-    elif model_config['cell_embedding'] == 1:
-        model.a.requires_grad = True
-        model.t.requires_grad = False
-        print('embedding: a true t false')
-    else:  # model_config['cell_embedding']=2
-        model.a.requires_grad = True
-        model.t.requires_grad = True
-        print('embedding: a true t true')
-
-    optimizer = torch.optim.Adam(model.parameters(), lr=1E-3)  # , weight_decay=5e-3)
-    criteria = nn.MSELoss()
-    model.train()
-
-    print('Training model = ResNetGNN() ...')
-
-    ff = 0
-
-    print(file_list[ff])
-
-    trackmate = trackmate_list[ff].copy()
-    trackmate_true = trackmate_list[ff].copy()
-
-    best_loss = np.inf
-
-    for epoch in range(1000):
-
-        if epoch == 100:
-            optimizer = torch.optim.Adam(model.parameters(), lr=1E-4)  # , weight_decay=5e-3)
-
-        mserr_list = []
-
-        trackmate = trackmate_true.copy()
-
-        for frame in range(20, 200):  # frame_list:
-
-            pos = np.argwhere(trackmate[:, 0] == frame)
-
-            list_all = pos[:, 0].astype(int)
-            mask = torch.tensor(np.ones(list_all.shape[0]), device=device)
-            for k in range(len(mask)):
-                if trackmate[list_all[k] - 1, 1] != trackmate[list_all[k] + 1, 1]:
-                    mask[k] = 0
-                if (trackmate[list_all[k], 2] < -0.45) | (trackmate[list_all[k], 3] < -0.52) | (
-                        trackmate[list_all[k], 3] > 0.55):
-                    mask[k] = 0
-            mask = mask[:, None]
-
-            x = torch.tensor(trackmate[list_all, 0:19], device=device)
-            target = torch.tensor(trackmate_true[list_all + 1, 4:5], device=device)
-
-            dataset = data.Data(x=x, pos=x[:, 2:4])
-            transform = T.Compose([T.Delaunay(), T.FaceToEdge(), T.Distance(norm=False)])
-            dataset = transform(dataset)
-            distance = dataset.edge_attr.detach().cpu().numpy()
-            pos = np.argwhere(distance < model_config['radius'])
-            edges = dataset.edge_index
-            dataset = data.Data(x=x, edge_index=edges[:, pos[:, 0]],
-                                edge_attr=torch.tensor(distance[pos[:, 0]], device=device))
-
-            optimizer.zero_grad()
-            pred = model(data=dataset, data_id=ff)
-
-            loss = criteria((pred[:, :] + x[:, 4:5]) * mask, target * mask) * 3 
-
-            loss.backward()
-            optimizer.step()
-            mserr_list.append(loss.item())
-
-            trackmate[list_all + 1, 8:9] = np.array(pred.detach().cpu())
-            trackmate[list_all + 1, 4:5] = trackmate[list_all, 4:5] + trackmate[list_all + 1, 8:9]
-
-            # pred, target, mu_v_xy, var_v_xy = model(dataset)
-            # sum = (mu_v_xy - target[:, 2:4]) ** 2 / (var_v_xy + 1E-7) + torch.log(var_v_xy)
-            # sum = sum * mask
-            # sum = torch.std(sum, axis=0)
-            # sum = torch.sum(sum ** 2)
-            # loss = sum / torch.sum(mask) * 1E3
-
-        print(f"Epoch: {epoch} Loss: {np.round(np.mean(mserr_list), 4)}")
-
-        if (np.mean(mserr_list) < best_loss):
-            best_loss = np.mean(mserr_list)
-            torch.save({'model_state_dict': model.state_dict(), 'optimizer_state_dict': optimizer.state_dict()},
-                       os.path.join(log_dir, 'models', 'best_model_new_emb_concatenate.pt'))
+        return aggr_out     #self.lin_node(aggr_out)
 
 
-if __name__ == "__main__":
+
+if __name__ == '__main__':
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
     print(f'Device :{device}')
 
-    file_list=["/home/allierc@hhmi.org/Desktop/signaling/HGF-ERK signaling/fig 1/B_E/210105/",\
-               "/home/allierc@hhmi.org/Desktop/signaling/HGF-ERK signaling/fig 1/B_E/210108/",\
-               "/home/allierc@hhmi.org/Desktop/signaling/HGF-ERK signaling/fig 1/B_E/210109/"]
+    flist = ['ReconsGraph']
+    for folder in flist:
+        files = glob.glob(f"/home/allierc@hhmi.org/Desktop/Py/Graph/{folder}/*")
+        for f in files:
+            os.remove(f)
 
-    print('Loading trackmate ...')
+    ntypes_list=[2]
+    n_list=[2000]
 
-    trackmate_list=[]
-    for ff in range(3):
-        trackmate = np.load(f'{file_list[ff]}/trackmate/transformed_spots_try{315+ff}.npy')
-        trackmate[-1, 0] = -1
-        trackmate_list.append(trackmate)
-        if ff==0:
-            n_tracks = np.max(trackmate[:, 1]) + 1
-            trackmate_true = trackmate.copy()
-            nstd = np.load(f'/home/allierc@hhmi.org/Desktop/signaling/HGF-ERK signaling/fig 1/B_E/210105/trackmate/nstd_try315.npy')
-            nmean = np.load(f'/home/allierc@hhmi.org/Desktop/signaling/HGF-ERK signaling/fig 1/B_E/210105/trackmate/nmean_try315.npy')
-            c = nstd[6] / nstd[2]
 
-    print('Trackmate quality check...')
-    time.sleep(0.5)
-    for ff in range(3):
-        trackmate = trackmate_list[ff]
-        for k in tqdm(range(5, trackmate.shape[0] - 1)):
-            if trackmate[k-1, 1] == trackmate[k+1, 1]:
+    ntypes=ntypes_list[0]
+    nparticles=n_list[0]
 
-                if np.abs(trackmate[k+1, 6] * c - (trackmate[k+1, 2] - trackmate[k, 2])) > 1E-3:
-                    print(f'Pb check vx at row {k}')
-                if np.abs(trackmate[k+1, 7] * c - (trackmate[k+1, 3] - trackmate[k, 3])) > 1E-3:
-                    print(f'Pb check vy at row {k}')
 
-                if np.abs(trackmate[k+1, 15] - (trackmate[k+1, 6] - trackmate[k, 6])) > 1E-3:
-                    print(f'Pb check accx at row {k}')
-                if np.abs(trackmate[k+1, 16] - (trackmate[k+1, 7] - trackmate[k, 7])) > 1E-3:
-                    print(f'Pb check accy at row {k}')
-    print('... done')
+    niter = 200
+    d = 2  # dimension
+    radius = 0.075
 
-    model_config = {'ntry': 426,
-                    'h': 0,
-                    'msg': 1,
-                    'embedding': 128,
-                    'cell_embedding': 1,
-                    'train_MLPs': True,
-                    'output_angle': False,
-                    'n_mp_layers': 5,
-                    'hidden_size': 32,
-                    'noise_level': 0,
-                    'batch_size': 8,
-                    'bRollout': True,
-                    'rollout_window': 2,
-                    'remove_update_U': True,
-                    'frame_start': 20,
-                    'frame_end': [241, 228, 228],
-                    'n_tracks': 3561,
-                    'radius': 0.15}
+    p=torch.load('./p_list_simu_N5.pt')
 
-    train_model()
+    datum = '230726'
+    print(datum)
+
+    p[0] = torch.tensor([1.23, 1.59, 0.1, 0.87])
+    p[1] = torch.tensor([1.78, 1.6, 0.65, 0.38])
+
+    block_type = torch.zeros(nparticles,1,device=device)
+    for k in range(1,ntypes):
+        block_type=torch.cat((block_type,k*torch.ones(nparticles,1,device=device)),1)
+    block_type = block_type[:, None, :]
+    block_type = block_type.repeat(200, 1, 1, 1)
+
+    folder=f'graphs_data/graphs_2_particles_{datum}'
+
+    if not (os.path.exists(folder)):
+        os.mkdir(folder)
+
+    boundary = 'no'  # no boundary condition
+    # boundary = 'per' # periodic
+    if boundary == 'no':
+        tau = 1 / 1000  # time step
+    else:
+        tau = 1 / 200
+
+    if boundary == 'no':  # change this for usual BC
+        def bc_pos(X):
+            return X
+        def bc_diff(D):
+            return D
+    else:
+        def bc_pos(X):
+            return torch.remainder(X, 1.0)
+        def bc_diff(D):
+            return torch.remainder(D - .5, 1.0) - .5
+
+    for step in range (1,2):
+
+        # generate data
+        if step==0:
+
+            copyfile(os.path.realpath(__file__), os.path.join(f'graphs_data/graphs_2_particles_{datum}/', 'generating_code.py'))
+
+            for n in n_list:
+                for ntypes in ntypes_list:
+                    for run in range(1):
+
+                        x_list=[]
+                        speed_list=[]
+                        edge_list=[]
+                        acc_list=[]
+
+                        print(f'run: {run} n types: {ntypes}  n points: {n}')
+
+                        X = torch.rand(n,d,ntypes,device=device)
+                        t = torch.tensor(np.linspace(-1.5,1.5,1000))
+
+                        ZSvg = torch.zeros((n, d, ntypes, niter),device=device)
+                        New_speed= torch.ones((n, d, ntypes),device=device)
+
+                        rr = torch.tensor(np.linspace(0, 0.015, 100),device=device)
+                        # Psi = psi(rr,p)
+
+                        time.sleep(0.5)
+                        for it in tqdm(range(niter)):
+
+                            Xall=torch.permute(X, (0, 2, 1))
+                            Xall = torch.reshape(Xall, (ntypes * n, d))
+
+                            for N in range(ntypes):
+                                New_speed[:,:,N]= - tau * Speed(X[:,:,N],Xall,p[N,:])
+
+                            for N in range(ntypes):
+                                ZSvg[:,:,N,it]=X[:,:,N].clone().detach()
+                                X[:, :, N] = bc_pos(X[:,:,N] + New_speed[:,:,N])
+
+                            distance = distmat_square(Xall, Xall)
+                            t = torch.Tensor([0.075 * 0.075])  # threshold
+                            adj_t = (distance < 0.075 * 0.075).float() * 1
+                            edge_index = adj_t.nonzero().t().contiguous()
+
+                            if run==0:
+                                fig = plt.figure(figsize=(16, 8))
+                                #plt.ion()
+                                ax = fig.add_subplot(1, 2, 1)
+                                for N in range(ntypes):
+                                    plt.scatter(ZSvg[:, 0, N, it].detach().cpu().numpy(), ZSvg[:, 1, N, it].detach().cpu().numpy(), s=5)
+                                plt.axis([-0.1, 1.1, -0.1, 1.1])
+                                ax = plt.gca()
+                                ax.axes.xaxis.set_ticklabels([])
+                                ax.axes.yaxis.set_ticklabels([])
+                                ax = fig.add_subplot(1, 2, 2)
+                                dataset = data.Data(x=Xall, edge_index=edge_index)
+                                vis = to_networkx(dataset, remove_self_loops=True, to_undirected=True)
+                                pos = dict(enumerate(np.array(Xall[:, 0:2].detach().cpu()), 0))
+                                nx.draw(vis, pos=pos, ax=ax, node_size=10, linewidths=0)
+                                plt.savefig(f"graphs_data/graphs_2_particles_{datum}/Fig/Fig_{it}.tif")
+
+                            torch.save(edge_index,f'graphs_data/graphs_2_particles_{datum}/edge_{run}_{it}.pt')
+
+                            x_list.append(X.detach().cpu().numpy())
+                            speed_list.append(New_speed.detach().cpu().numpy())
+
+                            edge_list.append(edge_index.detach().cpu().numpy())
+                            if it==0:
+                                acc_list.append(New_speed.detach().cpu().numpy()*0)
+                            else:
+                                acc_list.append(New_speed.detach().cpu().numpy() - prev_Speed)
+                            prev_Speed = New_speed.detach().cpu().numpy()
+
+                        ZSvg=ZSvg.detach().cpu().numpy()
+
+                        x_list = torch.tensor(x_list,device = device)
+                        speed_list = torch.tensor(speed_list, device=device)
+                        x_list = torch.cat((x_list,speed_list),2)
+                        x_list = torch.cat((x_list, block_type), 2)
+                        acc_list = torch.tensor(acc_list,device = device)
+
+                        torch.save(x_list, f'graphs_data/graphs_2_particles_{datum}/x_list_{run}.pt')
+                        torch.save(acc_list, f'graphs_data/graphs_2_particles_{datum}/acc_list_{run}.pt')
+
+                        if run==0:
+
+                            print ('Test data ...')
+                            for it in tqdm(range(niter - 1)):
+
+                                x1 = torch.squeeze(x_list[it + 1])
+                                x1 = torch.permute(x1, (2, 0, 1))
+                                x1 = torch.reshape(x1, (nparticles * ntypes, 5))
+
+                                x0 = torch.squeeze(x_list[it])
+                                x0 = torch.permute(x0, (2, 0, 1))
+                                x0 = torch.reshape(x0, (nparticles * ntypes, 5))
+
+                                y1 = torch.squeeze(acc_list[it + 1, :, :, :])
+                                y1 = torch.permute(y1, (2, 0, 1))
+                                y1 = torch.reshape(y1, (nparticles * ntypes, 2))
+
+                                diff0 = torch.sum(x1[:,2:4] - (x1[:,0:2] - x0[:,0:2])) / nparticles
+                                diff1 = torch.sum(y1[:, :] - (x1[:, 2:4] - x0[:, 2:4])) / nparticles
+
+                                if torch.abs(diff0+diff1)>1E-5:
+                                    print('pb frame {it}')
+
+                                # training
+
+        # train
+        if step==1:
+
+        # train data
+
+
+            best_loss = np.inf
+
+            graph_files = glob.glob(f"./graphs_data/graphs_2_particles_{datum}/edge*")
+            NGraphs=int(len(graph_files)/niter)
+            print ('Graph files N: ',NGraphs)
+            print('Normalize ...')
+            time.sleep(0.5)
+
+            arr = np.arange(0,NGraphs-1,2)
+            for run in tqdm(arr):
+                x=torch.load(f'./graphs_data/graphs_2_particles_{datum}/x_list_{run}.pt')
+                acc=torch.load(f'./graphs_data/graphs_2_particles_{datum}/acc_list_{run}.pt')
+                if run == 0:
+                    xx = x
+                    aacc = acc
+                else:
+                    xx = torch.concatenate((x, xx))
+                    aacc = torch.concatenate((aacc, acc))
+
+            mvx = torch.mean(xx[:,:,0,:])
+            mvy = torch.mean(xx[:,:,1,:])
+            vx = torch.std(xx[:,:,0,:])
+            vy = torch.std(xx[:,:,1,:])
+            nvx = np.array(xx[:,:,0,:].detach().cpu())
+            vx01, vx99 = normalize99(nvx)
+            nvy = np.array(xx[:,:,1,:].detach().cpu())
+            vy01, vy99 = normalize99(nvy)
+            vnorm = torch.tensor([vx01, vx99, vy01, vy99, vx, vy], device=device)
+
+            print(f'v_x={mvx} +/- {vx}')
+            print(f'v_y={mvy} +/- {vy}')
+            print(f'vx01={vx01} vx99={vx99}')
+            print(f'vy01={vy01} vy99={vy99}')
+
+            max = torch.mean(aacc[:,:,0,:])
+            may = torch.mean(aacc[:,:,1,:])
+            ax = torch.std(aacc[:,:,0,:])
+            ay = torch.std(aacc[:,:,1,:])
+            nax = np.array(aacc[:,:,0,:].detach().cpu())
+            ax01, ax99 = normalize99(nax)
+            nay = np.array(aacc[:,:,1,:].detach().cpu())
+            ay01, ay99 = normalize99(nay)
+
+            ynorm = torch.tensor([ax01, ax99, ay01, ay99, ax, ay], device=device)
+
+            print(f'acc_x={max} +/- {ax}')
+            print(f'acc_y={may} +/- {ay}')
+            print(f'ax01={ax01} ax99={ax99}')
+            print(f'ay01={ay01} ay99={ay99}')
+
+            for gridsearch in range(1):
+
+                print(f"gridsearch: {gridsearch}")
+                ntry_list = [510]
+                hidden_size_list = [32]
+
+                model_config = {'ntry': ntry_list[gridsearch],
+                            'input_size': 8,
+                            'output_size': 2,
+                            'hidden_size': hidden_size_list[gridsearch],
+                            'n_mp_layers': 3,
+                            'noise_level': 0}
+
+                ntry = model_config['ntry']
+
+                l_dir = os.path.join('.', 'log')
+                log_dir = os.path.join(l_dir, 'try_{}'.format(ntry))
+                print('log_dir: {}'.format(log_dir))
+
+                os.makedirs(log_dir, exist_ok=True)
+                os.makedirs(os.path.join(log_dir, 'models'), exist_ok=True)
+                os.makedirs(os.path.join(log_dir, 'data', 'val_outputs'), exist_ok=True)
+
+                copyfile(os.path.realpath(__file__), os.path.join(log_dir, 'training_code.py'))
+                torch.save(vnorm, os.path.join(log_dir, 'vnorm.pt'))
+                torch.save(ynorm, os.path.join(log_dir, 'ynorm.pt'))
+
+                print(f"ntry :{ntry}")
+                print(f"hidden_size: {hidden_size_list[gridsearch]}")
+
+                model = InteractionParticles(model_config,device)
+
+                table = PrettyTable(["Modules", "Parameters"])
+                total_params = 0
+                for name, parameter in model.named_parameters():
+                    if not parameter.requires_grad:
+                        continue
+                    param = parameter.numel()
+                    table.add_row([name, param])
+                    total_params += param
+                print(table)
+                print(f"Total Trainable Params: {total_params}")
+
+                optimizer= torch.optim.Adam(model.parameters(), lr=0.001, weight_decay=5e-4)
+                model.train()
+
+                print(f'Loop of :{int(NGraphs*niter/10)} steps')
+                print('')
+
+
+                for epoch in range(100):
+
+                    model.train()
+                    total_loss = []
+
+                    for N in range(1,int(NGraphs*niter/10)):
+
+                        run = 1 + np.random.randint(NGraphs - 2)
+
+                        x_list=torch.load(f'graphs_data/graphs_2_particles_{datum}/x_list_{run}.pt')
+                        acc_list=torch.load(f'graphs_data/graphs_2_particles_{datum}/acc_list_{run}.pt')
+
+                        acc_list[:,:, 0,:] = acc_list[:,:, 0,:] / ynorm[4]
+                        acc_list[:,:, 1,:] = acc_list[:,:, 1,:] / ynorm[5]
+
+                        optimizer.zero_grad()
+                        loss = 0
+
+                        for loop in range(10):
+
+                            k = np.random.randint(niter - 1)
+
+                            edges = torch.load(f'graphs_data/graphs_2_particles_{datum}/edge_{run}_{k}.pt')
+
+                            x=torch.squeeze(x_list[k,:,:,:])
+                            x = torch.permute(x, (2, 0, 1))
+                            x = torch.reshape (x,(nparticles*ntypes,5))
+                            dataset = data.Data(x=x, edge_index=edges)
+                            y = torch.squeeze(acc_list[k,:,:,:])
+                            y = torch.permute(y, (2, 0, 1))
+                            y = torch.reshape (y,(nparticles*ntypes,2))
+
+                            pred = model(dataset)
+
+                            datafit = (pred-y).norm(2)
+
+                            loss += datafit
+
+                            total_loss.append(datafit.item())
+
+                        loss.backward()
+                        optimizer.step()
+
+                        if N%250==0:
+                            print("   N {} Loss: {:.4f}".format(N,np.mean(total_loss)/nparticles ))
+
+                    print("Epoch {}. Loss: {:.4f}".format(epoch, np.mean(total_loss)/nparticles ))
+
+                    if (np.mean(total_loss) < best_loss):
+                        best_loss = np.mean(total_loss)
+                        torch.save({'model_state_dict': model.state_dict(),
+                                    'optimizer_state_dict': optimizer.state_dict()},
+                                   os.path.join(log_dir, 'models', 'best_model.pt'))
+                        print('\t\t Saving model')
+
+                    torch.save({'model_state_dict': model.state_dict(),
+                                'optimizer_state_dict': optimizer.state_dict()},
+                               os.path.join(log_dir, 'models', f'model_epoch_{epoch}.pt'))
+
+
+        # test
+        if step==2:
+
+            # model_config = {'ntry': 501,
+            #             'input_size': 11,
+            #             'output_size': 2,
+            #             'hidden_size': 32,
+            #             'n_mp_layers': 3,
+            #             'noise_level': 0}
+
+            # model_config = {'ntry': 506,
+            #             'input_size': 11,
+            #             'output_size': 2,
+            #             'hidden_size': 32,
+            #             'n_mp_layers': 3,
+            #             'noise_level': 0}
+            #
+            # model_config = {'ntry': 507,
+            #             'input_size': 11,
+            #             'output_size': 2,
+            #             'hidden_size': 32,
+            #             'n_mp_layers': 3,
+            #             'noise_level': 0}
+            #
+            # model_config = {'ntry': 508,
+            #             'input_size': 11,
+            #             'output_size': 2,
+            #             'hidden_size': 32,
+            #             'n_mp_layers': 3,
+            #             'noise_level': 0}
+
+            model_config = {'ntry': 510,
+                            'input_size': 8,
+                            'output_size': 2,
+                            'hidden_size': 32,
+                            'n_mp_layers': 3,
+                            'noise_level': 0}
+
+            datum = '230726'
+            print(datum)
+            ntry = model_config['ntry']
+            print(f"ntry :{ntry}")
+            print(f"hidden_size: {model_config['hidden_size']}")
+
+            model = InteractionParticles(model_config=model_config,device=device)
+            state_dict = torch.load(f"./log/try_{ntry}/models/best_model.pt")
+            model.load_state_dict(state_dict['model_state_dict'])
+            model.eval()
+
+            table = PrettyTable(["Modules", "Parameters"])
+            total_params = 0
+            for name, parameter in model.named_parameters():
+                if not parameter.requires_grad:
+                    continue
+                param = parameter.numel()
+                table.add_row([name, param])
+                total_params += param
+            print(table)
+            print(f"Total Trainable Params: {total_params}")
+
+            ynorm = torch.load(f'./log/try_{ntry}/ynorm.pt')
+            vnorm = torch.load(f'./log/try_{ntry}/vnorm.pt')
+
+
+
+            GT = torch.load(f'./graphs_data/graphs_2_particles_{datum}/x_list_0.pt')
+            GT0 = torch.squeeze (GT[0])
+
+            acc_list = torch.load(f'graphs_data/graphs_2_particles_{datum}/acc_list_0.pt')
+            acc_list[:, :, 0, :] = acc_list[:, :, 0, :] / ynorm[4]
+            acc_list[:, :, 1, :] = acc_list[:, :, 1, :] / ynorm[5]
+
+
+            edges = torch.load(f'./graphs_data/graphs_2_particles_{datum}/edge_0_0.pt')
+
+            dataset = data.Data(x=GT0.cuda(), edge_index=edges.cuda())
+            print('num_nodes: ', GT0.shape[0])
+            nparticles = GT0.shape[0]
+            print('dataset.num_node_features: ', dataset.num_node_features)
+
+            x = GT0
+            x = torch.permute(x, (2, 0, 1))
+            x = torch.reshape(x, (nparticles * ntypes, 5))
+
+            GT0 = x.clone()
+
+
+            for it in tqdm(range(niter+100 - 1)):
+
+                x0 = torch.squeeze (GT[min(niter,it+1)])
+                x0 = torch.permute(x0, (2, 0, 1))
+                x0 = torch.reshape(x0, (nparticles * ntypes, 5))
+
+                distance = torch.sum((x[:, None, 0:2] - x[None, :, 0:2]) ** 2, axis=2)
+                t = torch.Tensor([radius ** 2])  # threshold
+                adj_t = (distance < radius ** 2).float() * 1
+                edge_index = adj_t.nonzero().t().contiguous()
+                dataset = data.Data(x=x, edge_index=edge_index)
+
+                with torch.no_grad():
+                    y = model(dataset)  # acceleration estimation
+
+                # y = torch.squeeze(acc_list[0, :, :, :])
+                # y = torch.permute(y, (2, 0, 1))
+                # y = torch.reshape(y, (nparticles * ntypes, 2))
+
+                y[:, 0] = y[:, 0] * ynorm[4]
+                y[:, 1] = y[:, 1] * ynorm[5]
+                x[:, 2:4] = x[:, 2:4] + y  # speed update
+                x[:, 0:2] = x[:, 0:2] + x[:, 2:4]  # position update
+
+                fig = plt.figure(figsize=(25, 16))
+                # plt.ion()
+                ax = fig.add_subplot(2, 3, 1)
+                for k in range(ntypes):
+                    plt.scatter(GT0[k*nparticles:(k+1)*nparticles, 0].detach().cpu(), GT0[k*nparticles:(k+1)*nparticles, 1].detach().cpu(), s=3)
+
+                plt.xlim([-0.3, 1.3])
+                plt.ylim([-0.3, 1.3])
+                ax.axes.get_xaxis().set_visible(False)
+                ax.axes.get_yaxis().set_visible(False)
+                plt.axis('off')
+                plt.text(-0.25, 1.38, 'Distribution at t0 is 1.0x1.0')
+
+                ax = fig.add_subplot(2, 3, 2)
+                for k in range(ntypes):
+                    plt.scatter(x0[k*nparticles:(k+1)*nparticles, 0].detach().cpu(), x0[k*nparticles:(k+1)*nparticles, 1].detach().cpu(), s=3)
+                ax = plt.gca()
+                plt.xlim([-0.3, 1.3])
+                plt.ylim([-0.3, 1.3])
+                ax.axes.get_xaxis().set_visible(False)
+                ax.axes.get_yaxis().set_visible(False)
+                plt.axis('off')
+                plt.text(-0.25, 1.38, 'True', fontsize=30)
+                # plt.text(-0.25, 1.38, f'Frame: {min(niter,it)}')
+                # plt.text(-0.25, 1.33, f'Physics simulation', fontsize=10)
+
+                ax = fig.add_subplot(2, 3, 4)
+                pos = dict(enumerate(x[:, 0:2].detach().cpu().numpy(), 0))
+                vis = to_networkx(dataset, remove_self_loops=True, to_undirected=True)
+                nx.draw(vis, pos=pos, ax=ax, node_size=10, linewidths=0)
+                plt.xlim([-0.3, 1.3])
+                plt.ylim([-0.3, 1.3])
+                ax.axes.get_xaxis().set_visible(False)
+                ax.axes.get_yaxis().set_visible(False)
+                plt.axis('off')
+                plt.text(-0.25, 1.38, f'Frame: {it}')
+                plt.text(-0.25, 1.33, f'Graph: {x.shape[0]} nodes {edge_index.shape[1]} edges ', fontsize=10)
+
+                ax = fig.add_subplot(2, 3, 5)
+                for k in range(ntypes):
+                    plt.scatter(x[k*nparticles:(k+1)*nparticles, 0].detach().cpu(), x[k*nparticles:(k+1)*nparticles, 1].detach().cpu(), s=3)
+                ax = plt.gca()
+                ax.axes.xaxis.set_ticklabels([])
+                ax.axes.yaxis.set_ticklabels([])
+                plt.xlim([-0.3, 1.3])
+                plt.ylim([-0.3, 1.3])
+                ax.axes.get_xaxis().set_visible(False)
+                ax.axes.get_yaxis().set_visible(False)
+                plt.axis('off')
+                plt.text(-0.25, 1.38, 'Model', fontsize=30)
+                # plt.text(-0.25, 1.38, f'Frame: {it}')
+                # plt.text(-0.25, 1.33, f'GNN prediction', fontsize=10)
+
+                # rmserr = torch.sqrt(torch.mean(torch.sum((x - x0) ** 2, axis=1)))
+                # rmserr_list.append(rmserr.item())
+                # rmserr0 = torch.sqrt(
+                #     torch.mean(torch.sum((x[0:int(nparticles / 2), :] - x0[0:int(nparticles / 2), :]) ** 2, axis=1)))
+                # rmserr_list0.append(rmserr0.item())
+                # rmserr1 = torch.sqrt(torch.mean(
+                #     torch.sum((x[int(nparticles / 2):nparticles, :] - x0[int(nparticles / 2):nparticles, :]) ** 2, axis=1)))
+                # rmserr_list1.append(rmserr1.item())
+                #
+                # ax = fig.add_subplot(2, 3, 3)
+                # plt.plot(rmserr_list, 'k', label='RMSE')
+                # plt.plot(rmserr_list0, color=c1, label='RMSE0')
+                # plt.plot(rmserr_list1, color=c2, label='RMSE1')
+                # plt.ylim([0, 0.1])
+                # plt.xlim([0, 200])
+                # plt.tick_params(axis='both', which='major', labelsize=10)
+                # plt.xlabel('Frame [a.u]', fontsize="10")
+                # plt.ylabel('RMSE [a.u]', fontsize="10")
+                # plt.legend(fontsize="10")
+                #
+                ax = fig.add_subplot(2, 3, 6)
+                temp1 = torch.cat((x, x0), 0)
+                pos = dict(enumerate(np.array(temp1[:, 0:2].detach().cpu()), 0))
+                temp2 = torch.tensor(np.arange(nparticles*ntypes), device=device)
+                temp3 = torch.tensor(np.arange(nparticles*ntypes) + nparticles*ntypes, device=device)
+                temp4 = torch.concatenate((temp2[:, None], temp3[:, None]), 1)
+                temp4 = torch.t(temp4)
+                dataset = data.Data(x=temp1, edge_index=temp4)
+                vis = to_networkx(dataset, remove_self_loops=True, to_undirected=True)
+                nx.draw(vis, pos=pos, ax=ax, node_size=0, linewidths=0)
+                plt.xlim([-0.3, 1.3])
+                plt.ylim([-0.3, 1.3])
+                ax.axes.get_xaxis().set_visible(False)
+                ax.axes.get_yaxis().set_visible(False)
+                plt.axis('off')
+                plt.text(-0.25, 1.38, f'Frame: {it}')
+                rmserr = torch.sqrt(torch.mean(torch.sum((x - x0) ** 2, axis=1)))
+                plt.text(-0.25, 1.33, 'Prediction RMSE: {:.4f}'.format(rmserr.detach()), fontsize=10)
+
+                plt.savefig(f"./ReconsGraph/Fig_{it}.tif")
+                plt.close()
+
+
+
+
+
+
+
