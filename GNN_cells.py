@@ -706,107 +706,13 @@ class EdgeNetwork(pyg.nn.MessagePassing):
 
         dx = xj - xi
         dy = yj - yi
-        dvx = vxj - vxi
-        dvy = vyj - vyi
 
         d = edge_feature[:,0:1]
 
-        self.new_edges = torch.cat((d, dx , dy , dvx, dvy), dim=-1)
+        self.new_edges = torch.cat((d, dx , dy , vxi, vyi, vxi, vyj, erki, erkj), dim=-1)
 
         return d
 class InteractionNetwork(pyg.nn.MessagePassing):
-    """Interaction Network as proposed in this paper:
-    https://proceedings.neurips.cc/paper/2016/hash/3147da8ab4a0437c15ef51a5cc7f2dc4-Abstract.html"""
-    def __init__(self, hidden_size, layers, h, msg, device):
-        super().__init__(aggr='add')  # "Add" aggregation.
-
-        self.upgrade_typeidden_size = hidden_size
-        self.upgrade_type = h
-        self.layers = layers
-        self.msg = msg
-        self.device =device
-
-        if (self.msg == 0) | (self.msg==3):
-             self.lin_edge = MLP2(input_size=1, hidden_size=self.upgrade_typeidden_size, output_size=7, layers=self.layers, device=self.device)
-        if (self.msg == 1):
-            self.lin_edge = MLP2(input_size=13, hidden_size=self.upgrade_typeidden_size, output_size=7, layers=self.layers, device=self.device)
-        if (self.msg == 2):
-            self.lin_edge = MLP2(input_size=14, hidden_size=self.upgrade_typeidden_size, output_size=7, layers=self.layers, device=self.device)
-
-        if self.upgrade_type == 0:
-            self.lin_node = MLP2(input_size=12, hidden_size=self.upgrade_typeidden_size, output_size=7, layers=self.layers, device=self.device)
-        else:
-            self.lin_node = MLP2(input_size=64, hidden_size=self.upgrade_typeidden_size, output_size=7, layers=self.layers, device=self.device)
-
-        self.rnn = torch.nn.GRUCell(14, 64,device=self.device,dtype=torch.float64)
-
-    def forward(self, x, edge_index, edge_feature):
-
-        aggr = self.propagate(edge_index, x=(x, x), edge_feature=edge_feature)
-
-        if self.upgrade_type==0:
-            node_out = self.lin_node(torch.cat((x[:,:-2], aggr), dim=-1))
-            prev_node_feature = node_out[:, :-2]
-            prev_edge_feature = edge_feature[:,:-2]
-
-            node_out = x + node_out
-            node_out[:, :-2] = prev_node_feature  # no update ui
-
-            edge_out = edge_feature + model.new_edges
-            if model_config['remove_update_U']:
-                edge_out[:,:-2] = prev_edge_feature     #no update ui
-
-        else:
-            super_x=torch.cat((x, coeff, aggr), dim=-1)
-            model.h = self.rnn(super_x,model.h)     ########### TO BE CORRECTED ###################
-            node_out = self.lin_node(model.h)
-            edge_out = edge_feature + self.new_edges
-
-        return node_out, edge_out
-
-    def message(self, x_i, x_j, edge_feature):
-
-        xi = x_i[:, 0:1]
-        yi = x_i[:, 1:2]
-
-        xj = x_j[:, 0:1]
-        yj = x_j[:, 1:2]
-
-        vxi = x_i[:, 2:3]
-        vyi = x_i[:, 3:4]
-
-        vxj = x_j[:, 2:3]
-        vyj = x_j[:, 3:4]
-
-        erki = x_i[:,4:5]
-        erkj = x_j[:,4:5]
-
-
-        dx = xj - xi
-        dy = yj - yi
-        dvx = vxj - vxi
-        dvy = vyj - vyi
-
-
-        diff_erk = erkj - erki
-
-        cell_id =x_i[:, 1].detach().cpu().numpy()
-        coeff=model.a[cell_id,:]
-
-        if self.msg==0:
-            x = diff_erk*0
-        elif mself.msg==1:
-            x = torch.cat((edge_feature, dx*coeff[:,0:1], dy*coeff[:,0:1], dvx*coeff[:,1:2], dvy*coeff[:,1:2]), dim=-1)
-        elif self.msg==2:
-            x = torch.cat((edge_feature, dx*coeff[:,0:1], dy*coeff[:,0:1], dvx*coeff[:,1:2], dvy*coeff[:,1:2], diff_erk), dim=-1)
-        else: # model_config['msg']==3:
-            x = diff_erk*0
-
-        x = self.lin_edge(x)
-        self.new_edges = x
-
-        return x
-class InteractionNetworkEmb(pyg.nn.MessagePassing):
     """Interaction Network as proposed in this paper:
     https://proceedings.neurips.cc/paper/2016/hash/3147da8ab4a0437c15ef51a5cc7f2dc4-Abstract.html"""
     def __init__(self, layers, embedding, device, h):
@@ -867,34 +773,24 @@ class ResNetGNN(torch.nn.Module):
         self.cell_embedding = model_config['cell_embedding']
         self.edge_init = EdgeNetwork()
 
-        if self.embedding > 0:
-            self.layer = torch.nn.ModuleList(
-                [InteractionNetworkEmb(layers=3, embedding=self.embedding, h=self.upgrade_type, device=self.device) for _ in range(self.nlayers)])
-            self.node_out = MLP2(input_size=self.embedding, hidden_size=self.hidden_size, output_size=1, layers=3, device=self.device)
-        else:
-            self.layer = torch.nn.ModuleList([InteractionNetwork(hidden_size=self.upgrade_typeidden_size, layers=3, h=self.upgrade_type,
-                                                                 msg=self.msg, device=self.device) for _ in
-                                              range(self.nlayers)])
-            self.node_out = MLP2(input_size=7, hidden_size=self.hidden_size, output_size=1, layers=3,
-                                device=self.device)
+        self.layer = torch.nn.ModuleList([InteractionNetwork(layers=3, embedding=self.embedding, h=self.upgrade_type, device=self.device) for _ in range(self.nlayers)])
+        self.node_out = MLP2(input_size=self.embedding, hidden_size=self.hidden_size, output_size=1, layers=3, device=self.device)
 
         self.a = nn.Parameter(torch.tensor(np.ones((3, int(self.n_tracks + 1), self.cell_embedding)), requires_grad=False, device=self.device))
         self.t = nn.Parameter(torch.tensor(np.ones((3, int(self.n_tracks + 1), self.cell_embedding)), requires_grad=False, device=self.device))
 
         self.upgrade_type_all = torch.zeros((int(self.n_tracks + 1), 64), requires_grad=False, device=self.device,dtype=torch.float64)
 
-        if self.embedding > 0:
-            self.embedding_node = MLP2(input_size=6 + self.cell_embedding, hidden_size=self.embedding, output_size=self.embedding,layers=3, device=self.device)
-            self.embedding_edges = MLP2(input_size=5, hidden_size=self.embedding, output_size=self.embedding,layers=3, device=self.device)
+        self.embedding_node = MLP2(input_size=6 + self.cell_embedding, hidden_size=self.embedding, output_size=self.embedding,layers=3, device=self.device)
+        self.embedding_edges = MLP2(input_size=9, hidden_size=self.embedding, output_size=self.embedding,layers=3, device=self.device)
 
     def forward(self, data, data_id,step=2, cos_phi=0, sin_phi=0):
 
         node_feature = torch.cat((data.x[:, 2:6], data.x[:, 8:9], data.x[:, 10:11]), dim=-1)
         edge_feature = self.edge_init(node_feature, data.edge_index, edge_feature=data.edge_attr)
 
-        if self.embedding > 0:
-            node_feature = self.embedding_node(torch.cat((node_feature, self.a[data_id, data.x[:, 1].detach().cpu().numpy(), :]), dim=-1))
-            edge_feature = self.embedding_edges(edge_feature)
+        node_feature = self.embedding_node(torch.cat((node_feature, self.a[data_id, data.x[:, 1].detach().cpu().numpy(), :]), dim=-1))
+        edge_feature = self.embedding_edges(edge_feature)
 
         for i in range(self.nlayers):
             node_feature, edge_feature = self.layer[i](node_feature, data.edge_index, edge_feature=edge_feature)
@@ -3398,7 +3294,7 @@ def load_model_config (id=505):
                     'msg': 1,
                     'aggr': 0,
                     'rot_mode': 1,
-                    'embedding': 128,
+                    'embedding': 64,
                     'time_embedding': False,
                     'n_mp_layers': 5,
                     'hidden_size': 32,
@@ -3413,7 +3309,120 @@ def load_model_config (id=505):
                     'train_MLPs': True,
                     'cell_embedding': 3,
                     'net_type': 'ResNetGNN'}
-
+    if id == 538:
+        model_config_test = {'ntry': id,
+                    'dataset': ['2309012_490'],
+                    'trackmate_metric': {'Label': 0,
+                                         'Spot_ID': 1,
+                                         'Track_ID': 2,
+                                         'Quality': 3,
+                                         'X': 4,
+                                         'Y': 5,
+                                         'Z': 6,
+                                         'T': 7,
+                                         'Frame': 8,
+                                         'R': 9,
+                                         'Visibility': 10,
+                                         'Spot color': 11,
+                                         'Mean Ch1': 12,
+                                         'Median Ch1': 13,
+                                         'Min Ch1': 14,
+                                         'Max Ch1': 15,
+                                         'Sum Ch1': 16,
+                                         'Std Ch1': 17,
+                                         'Ctrst Ch1': 18,
+                                         'SNR Ch1': 19,
+                                         'El. x0': 20,
+                                         'El. y0': 21,
+                                         'El. long axis': 22,
+                                         'El. sh. axis': 23,
+                                         'El. angle': 24,
+                                         'El. a.r.': 25,
+                                         'Area': 26,
+                                         'Perim.': 27,
+                                         'Circ.': 28,
+                                         'Solidity': 29,
+                                         'Shape index': 30},
+                    'metric_list': ['Frame', 'Track_ID', 'X', 'Y', 'Mean Ch1', 'Area'],
+                    'file_folder' : '/home/allierc@hhmi.org/Desktop/signaling/HGF-ERK signaling/fig 1/B_E/210105/trackmate/',
+                    'dx': 0.908,
+                    'dt': 5.0,
+                    'upgrade_type': 0,
+                    'msg': 1,
+                    'aggr': 0,
+                    'rot_mode': 1,
+                    'embedding': 64,
+                    'time_embedding': False,
+                    'n_mp_layers': 5,
+                    'hidden_size': 32,
+                    'noise_level': 5E-3,
+                    'batch_size': 8,
+                    'time_window': 0,
+                    'frame_start': 20,
+                    'frame_end': [180],  # [241,228,228],
+                    'n_tracks': 0,
+                    'radius': 0.15,
+                    'remove_update_U': True,
+                    'train_MLPs': True,
+                    'cell_embedding': 3,
+                    'net_type': 'ResNetGNN'}
+    if id == 539:
+        model_config_test = {'ntry': id,
+                    'dataset': ['2309012_490'],
+                    'trackmate_metric': {'Label': 0,
+                                         'Spot_ID': 1,
+                                         'Track_ID': 2,
+                                         'Quality': 3,
+                                         'X': 4,
+                                         'Y': 5,
+                                         'Z': 6,
+                                         'T': 7,
+                                         'Frame': 8,
+                                         'R': 9,
+                                         'Visibility': 10,
+                                         'Spot color': 11,
+                                         'Mean Ch1': 12,
+                                         'Median Ch1': 13,
+                                         'Min Ch1': 14,
+                                         'Max Ch1': 15,
+                                         'Sum Ch1': 16,
+                                         'Std Ch1': 17,
+                                         'Ctrst Ch1': 18,
+                                         'SNR Ch1': 19,
+                                         'El. x0': 20,
+                                         'El. y0': 21,
+                                         'El. long axis': 22,
+                                         'El. sh. axis': 23,
+                                         'El. angle': 24,
+                                         'El. a.r.': 25,
+                                         'Area': 26,
+                                         'Perim.': 27,
+                                         'Circ.': 28,
+                                         'Solidity': 29,
+                                         'Shape index': 30},
+                    'metric_list': ['Frame', 'Track_ID', 'X', 'Y', 'Mean Ch1', 'Area'],
+                    'file_folder' : '/home/allierc@hhmi.org/Desktop/signaling/HGF-ERK signaling/fig 1/B_E/210105/trackmate/',
+                    'dx': 0.908,
+                    'dt': 5.0,
+                    'upgrade_type': 0,
+                    'msg': 1,
+                    'aggr': 0,
+                    'rot_mode': 1,
+                    'embedding': 32,
+                    'time_embedding': False,
+                    'n_mp_layers': 5,
+                    'hidden_size': 32,
+                    'noise_level': 5E-3,
+                    'batch_size': 8,
+                    'time_window': 0,
+                    'frame_start': 20,
+                    'frame_end': [180],  # [241,228,228],
+                    'n_tracks': 0,
+                    'radius': 0.15,
+                    'remove_update_U': True,
+                    'train_MLPs': True,
+                    'cell_embedding': 3,
+                    'net_type': 'ResNetGNN'}
     # print('watch out model_config not find')
     return model_config_test
 
@@ -3429,15 +3438,15 @@ if __name__ == "__main__":
     scaler = StandardScaler()
     S_e = SamplesLoss(loss="sinkhorn", p=2, blur=.05)
 
-    for gtest in [524,529]:
+    for gtest in range(538,540):
         model_config = load_model_config(id=gtest)
         for key, value in model_config.items():
             print(key, ":", value)
         trackmate_list, nstd, nmean, n_tracks_list = load_trackmate(model_config)
         # if model_config['net_type'] == 'InteractionParticles':
         #     train_model_Interaction(model_config, trackmate_list, nstd, nmean, n_tracks_list)
-        # if model_config['net_type']=='ResNetGNN':
-        #     train_model_ResNet(model_config, trackmate_list, nstd, nmean, n_tracks_list)
+        if model_config['net_type']=='ResNetGNN':
+            train_model_ResNet(model_config, trackmate_list, nstd, nmean, n_tracks_list)
         R2_list = test_model(model_config, trackmate_list=trackmate_list, bVisu=True, bMinimization=False, frame_start=20)
 
 
