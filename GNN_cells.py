@@ -887,7 +887,7 @@ class ResNetGNN(torch.nn.Module):
             self.embedding_node = MLP2(input_size=6 + self.cell_embedding, hidden_size=self.embedding, output_size=self.embedding,layers=3, device=self.device)
             self.embedding_edges = MLP2(input_size=5, hidden_size=self.embedding, output_size=self.embedding,layers=3, device=self.device)
 
-    def forward(self, data, data_id):
+    def forward(self, data, data_id,step=2, cos_phi=0, sin_phi=0):
 
         node_feature = torch.cat((data.x[:, 2:6], data.x[:, 8:9], data.x[:, 10:11]), dim=-1)
         edge_feature = self.edge_init(node_feature, data.edge_index, edge_feature=data.edge_attr)
