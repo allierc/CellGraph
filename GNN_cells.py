@@ -968,7 +968,7 @@ def train_model_ResNet(model_config=None, trackmate_list=None, nstd=None, nmean=
                 if model_config['noise_level'] > 0:
                     noise_current = torch.randn((x.shape[0], 2), device=device) * model_config['noise_level']
                     x[:, 2:4] = x[:, 2:4] + noise_current
-                target = torch.tensor(trackmate_true[list_all + 1, 8:9], device=device)
+                target = torch.tensor(trackmate_true[list_all + 1, 10:11], device=device)
 
                 dataset = data.Data(x=x, pos=x[:, 2:4])
                 transform = T.Compose([T.Delaunay(), T.FaceToEdge(), T.Distance(norm=False)])
@@ -3429,9 +3429,7 @@ if __name__ == "__main__":
     scaler = StandardScaler()
     S_e = SamplesLoss(loss="sinkhorn", p=2, blur=.05)
 
-    test_list=[534,535,536,537,526,527] #,528,529,530,531,532,533]
-
-    for gtest in test_list:
+    for gtest in [524,529]:
         model_config = load_model_config(id=gtest)
         for key, value in model_config.items():
             print(key, ":", value)
