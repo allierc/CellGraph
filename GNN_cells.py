@@ -3429,20 +3429,18 @@ if __name__ == "__main__":
     scaler = StandardScaler()
     S_e = SamplesLoss(loss="sinkhorn", p=2, blur=.05)
 
-    test_list=[526,527,528,529,530,531,532,533]
+    test_list=[534,535,536,537,526,527] #,528,529,530,531,532,533]
 
     for gtest in test_list:
-
         model_config = load_model_config(id=gtest)
         for key, value in model_config.items():
             print(key, ":", value)
-
         trackmate_list, nstd, nmean, n_tracks_list = load_trackmate(model_config)
-        if model_config['net_type'] == 'InteractionParticles':
-            train_model_Interaction(model_config, trackmate_list, nstd, nmean, n_tracks_list)
-        if model_config['net_type']=='ResNetGNN':
-            train_model_ResNet(model_config, trackmate_list, nstd, nmean, n_tracks_list)
-        # R2_list = test_model(model_config, trackmate_list=trackmate_list, bVisu=True, bMinimization=False, frame_start=20)
+        # if model_config['net_type'] == 'InteractionParticles':
+        #     train_model_Interaction(model_config, trackmate_list, nstd, nmean, n_tracks_list)
+        # if model_config['net_type']=='ResNetGNN':
+        #     train_model_ResNet(model_config, trackmate_list, nstd, nmean, n_tracks_list)
+        R2_list = test_model(model_config, trackmate_list=trackmate_list, bVisu=True, bMinimization=False, frame_start=20)
 
 
 
