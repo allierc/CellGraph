@@ -769,7 +769,8 @@ class ResNetGNN(torch.nn.Module):
         self.cell_embedding = model_config['cell_embedding']
         self.edge_init = EdgeNetwork()
 
-        self.layer = torch.nn.ModuleList([InteractionNetwork(layers=3, embedding=self.embedding, h=self.upgrade_type, device=self.device) for _ in range(self.nlayers)])
+        # self.layer = torch.nn.ModuleList([InteractionNetwork(layers=3, embedding=self.embedding, h=self.upgrade_type, device=self.device) for _ in range(self.nlayers)])
+        self.layer = InteractionNetwork(layers=3, embedding=self.embedding, h=self.upgrade_type, device=self.device)
 
 
         #self.node_out = pyg.nn.MLP(in_channels=self.embedding, hidden_channels=self.hidden_size, out_channels=1, num_layers=3, act='relu', device=self.device, dtype=torch.float64)
@@ -798,8 +799,8 @@ class ResNetGNN(torch.nn.Module):
         edge_feature = self.embedding_edges(edge_feature)
 
         for i in range(self.nlayers):
-            node_feature, edge_feature = self.layer[i](node_feature, data.edge_index, edge_feature=edge_feature)
-
+            # node_feature, edge_feature = self.layer[i](node_feature, data.edge_index, edge_feature=edge_feature)
+            node_feature, edge_feature = self.layer(node_feature, data.edge_index, edge_feature=edge_feature)
         pred = self.node_out(node_feature)
 
         return pred
@@ -3404,7 +3405,7 @@ if __name__ == "__main__":
     scaler = StandardScaler()
     S_e = SamplesLoss(loss="sinkhorn", p=2, blur=.05)
 
-    for gtest in range(538,540):
+    for gtest in range(539,540):
         model_config = load_model_config(id=gtest)
         for key, value in model_config.items():
             print(key, ":", value)
